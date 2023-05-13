@@ -135,7 +135,11 @@ func (t *CacheTable) Add(key uint64, data []byte, ttl time.Duration, opts ...Opt
 	t.table[key] = NewCacheItem(key, data, t.cacheGeneration, ttl, opts...)
 	t.cacheMutations++
 	if t.addCallback != nil {
-		return t.addCallback(key, data)
+		bData, err := t.table[key].Marshall()
+		if err != nil {
+			return err
+		}
+		return t.addCallback(key, bData)
 	}
 	return nil
 }
@@ -150,7 +154,11 @@ func (t *CacheTable) Del(key uint64) error {
 	t.table[key].SetTombstoned(true)
 	t.cacheMutations++
 	if t.delCallback != nil {
-		return t.delCallback(key, nil)
+		bData, err := t.table[key].Marshall()
+		if err != nil {
+			return err
+		}
+		return t.delCallback(key, bData)
 	}
 	return nil
 }
