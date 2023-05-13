@@ -1,0 +1,54 @@
+syntax="proto3";
+
+package proto;
+
+option go_package = "github.com/rarydzu/gmonorepo/proto;proto";
+
+
+message StatRequest {
+   string fs = 1;
+}
+
+message StatResponse {
+   string id = 1;
+   uint32 BlockSize = 2;
+	uint64 Blocks = 3;
+	uint64 BlocksFree = 4;
+	uint64 BlocksAvailable = 5;
+}
+
+service MonofsStat {
+   rpc Stat(StatRequest) returns (StatResponse) {}
+}
+
+message File {
+   string bucket = 1;
+   string name = 2;
+   string uid = 3;
+   string gid = 4;
+   int64 size = 5;
+   int64 mtime = 6;
+   int64 ctime = 7;
+   int64 atime = 8;
+   int32 mode = 9;
+   int32 type = 10;
+   string hash = 11;
+}
+
+message ListRequest {
+   string fs = 1;
+   string bucket = 2;
+}
+
+message ListResponse {
+   repeated File files = 1;
+}
+
+service MonofsProxy {
+   rpc List(ListRequest) returns (stream ListResponse) {}
+   // Put
+   // Get
+   // Delete
+   // StartTxn
+   // CommitTxn
+}
