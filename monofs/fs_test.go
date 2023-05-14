@@ -102,14 +102,13 @@ func (t *MonoFSTest) SetUp(ti *TestInfo) {
 }
 
 func (t *MonoFSTest) TearDown() {
-	// Delete inodePath
 	os.RemoveAll(t.Dir)
 }
 
 func (t *MonoFSTest) ReadDir_Root() {
-	err := os.Mkdir(t.Dir+"/foo", 0755)
+	err := os.Mkdir(t.Dir+"/foo_root", 0755)
 	AssertEq(nil, err)
-	err = os.Mkdir(t.Dir+"/bar", 0755)
+	err = os.Mkdir(t.Dir+"/bar_root", 0755)
 	AssertEq(nil, err)
 	entries, err := fusetesting.ReadDirPicky(t.Dir)
 	AssertEq(nil, err)
@@ -124,37 +123,48 @@ func (t *MonoFSTest) StatFs() {
 	AssertEq(stat.Bfree, uint64(float64(blocksAvailable)*0.9))
 }
 
-func CreateAndCheckFileTree(rootPath string) error {
-	if err := os.Mkdir(rootPath+"/bar", 0755); err != nil {
-		return err
+// CreateRandomString creates random string with given length
+func CreateRandomString(length int) string {
+	rand.Seed(time.Now().UnixNano())
+	letterRunes := []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+	b := make([]rune, length)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
 	}
-	if err := os.Mkdir(rootPath+"/bar/baz", 0755); err != nil {
-		return err
+	return string(b)
+}
+
+func CreateAndCheckFileTree(rootPath, dir string, round int) error {
+	if err := os.Mkdir(rootPath+dir, 0755); err != nil {
+		return fmt.Errorf("round %d failed to create dir %s: %w", round, dir, err)
 	}
-	if err := os.Mkdir(rootPath+"/bar/baz/qux", 0755); err != nil {
-		return err
+	if err := os.Mkdir(rootPath+dir+"/baz", 0755); err != nil {
+		return fmt.Errorf("round %d failed to create dir %s: %w", round, dir+"/baz", err)
 	}
-	file, err := os.Create(rootPath + "/bar/baz/qux/file.txt")
+	if err := os.Mkdir(rootPath+dir+"/baz/qux", 0755); err != nil {
+		return fmt.Errorf("round %d failed to create dir %s: %w", round, dir+"/baz/qux", err)
+	}
+	file, err := os.Create(rootPath + dir + "/baz/qux/file.txt")
 	if err != nil {
-		return err
+		return fmt.Errorf("round %d failed to create file %s: %w", round, dir+"/baz/qux/file.txt", err)
 	}
 	if err := file.Close(); err != nil {
-		return err
+		return fmt.Errorf("round %d failed to close file %s: %w", round, dir+"/baz/qux/file.txt", err)
 	}
-	file, err = os.Create(rootPath + "/bar/baz/qux/file2.txt")
+	file, err = os.Create(rootPath + dir + "/baz/qux/file2.txt")
 	if err != nil {
-		return err
+		return fmt.Errorf("round %d failed to create file %s: %w", round, dir+"/baz/qux/file2.txt", err)
 	}
 	if err := file.Close(); err != nil {
-		return err
+		return fmt.Errorf("round %d failed to close file %s: %w", round, dir+"/baz/qux/file2.txt", err)
 	}
 	filesCnt := 0
 	dirCnt := 0
-	err = filepath.Walk(rootPath+"/bar", func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(rootPath+dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() == true {
+		if info.IsDir() {
 			dirCnt++
 		} else {
 			filesCnt++
@@ -162,24 +172,45 @@ func CreateAndCheckFileTree(rootPath string) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("round %d failed to walk %s: %w", round, dir, err)
 	}
 	if filesCnt != 2 {
-		return fmt.Errorf("filesCnt != 2")
+		return fmt.Errorf("round %d filesCnt(%d) != 2", round, filesCnt)
 	}
 	if dirCnt != 3 {
-		return fmt.Errorf("dirCnt != 3")
+		return fmt.Errorf("round %d dirCnt(%d) != 3", round, dirCnt)
 	}
-	return os.RemoveAll(rootPath + "/bar")
+	return os.RemoveAll(rootPath + dir)
 }
 
 func (t MonoFSTest) RewriteFiles() {
-	for i := 0; i < 10; i++ {
-		err := CreateAndCheckFileTree(t.Dir)
+	testDir := fmt.Sprintf("/%s", CreateRandomString(64))
+	for i := 0; i < 20; i++ {
+		err := CreateAndCheckFileTree(t.Dir, testDir, i)
 		AssertEq(nil, err)
 		entries, err := fusetesting.ReadDirPicky(t.Dir)
 		AssertEq(nil, err)
 		AssertEq(0, len(entries))
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func (t MonoFSTest) CreateRemoveLinks() {
+	err := os.Mkdir(t.Dir+"/foo", 0755)
+	AssertEq(nil, err)
+	err = os.Mkdir(t.Dir+"/bar", 0755)
+	AssertEq(nil, err)
+	err = os.Mkdir(t.Dir+"/baz", 0755)
+	AssertEq(nil, err)
+	err = os.Symlink(t.Dir+"/foo", t.Dir+"/bar/foo")
+	AssertEq(nil, err)
+	err = os.Symlink(t.Dir+"/foo", t.Dir+"/baz/foo")
+	AssertEq(nil, err)
+	err = os.Remove(t.Dir + "/bar/foo")
+	AssertEq(nil, err)
+	err = os.Remove(t.Dir + "/baz/foo")
+	AssertEq(nil, err)
+	entries, err := fusetesting.ReadDirPicky(t.Dir)
+	AssertEq(nil, err)
+	AssertEq(3, len(entries))
 }

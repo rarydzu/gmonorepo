@@ -144,6 +144,15 @@ func (t *CacheTable) Add(key uint64, data []byte, ttl time.Duration, opts ...Opt
 	return nil
 }
 
+// Set sets item in cache
+func (t *CacheTable) Set(item *CacheItem) {
+	t.Lock()
+	defer t.Unlock()
+	t.currentSize++
+	t.table[item.Key] = item
+	t.cacheMutations++
+}
+
 // Del deletes item from cache
 func (t *CacheTable) Del(key uint64) error {
 	t.Lock()

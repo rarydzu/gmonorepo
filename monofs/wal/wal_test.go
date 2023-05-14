@@ -1,18 +1,25 @@
 package wal
 
 import (
+	"embed"
 	"fmt"
 	"math/rand"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/rarydzu/gmonorepo/monofs/monocache"
+	"github.com/rarydzu/gmonorepo/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 const (
 	expectedDbEntries = 20
 )
+
+//go:embed testdata/*.wal
+var walFiles embed.FS
 
 // generateRandom generates random slice if bytes for testing
 func generateRandom() []byte {
@@ -114,4 +121,51 @@ func TestWAL(t *testing.T) {
 		t.Fatal(err)
 	}
 	assert.Equal(t, expectedDbEntries, numberOfKeys)
+}
+
+func TestWALReplyLong(t *testing.T) {
+	data, _ := walFiles.ReadFile("testdata/0.wal")
+	f, err := os.Create(t.TempDir() + "/test_0.wal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	_, err = f.Write(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Seek(0, 0)
+	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wal, err := New(t.TempDir(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wal.file.Close()
+	wal.file = f
+	entries, err := wal.Reply()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cacheTable := make(map[uint64]*monocache.CacheItem)
+	for _, value := range entries {
+		item := &monocache.CacheItem{}
+		if err := item.Unmarshall(value.Value); err != nil {
+			t.Fatal(err)
+		}
+		cacheTable[utils.BytesToUint64(value.Key)] = item
+	}
+	tombstoned := 0
+	live := 0
+	for _, v := range cacheTable {
+		if v.Tombstoned {
+			tombstoned++
+		} else {
+			live++
+		}
+	}
+	assert.Equal(t, 17, tombstoned)
+	assert.Equal(t, 79, live)
 }

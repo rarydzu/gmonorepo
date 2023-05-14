@@ -93,17 +93,11 @@ func New(config *config.Config) (*Fsdb, error) {
 		return nil, tracerr.Errorf("replying WAL entries failed: %w", err)
 	}
 	for _, entry := range entries {
-		if !entry.Tombstoned {
-			if err := fsdb.iCache.Add(utils.BytesToUint64(entry.Key), entry.Value, 0); err != nil {
-				fsdb.Close()
-				return nil, tracerr.Errorf("adding entry %v to cache failed: %w", entry, err)
-			}
-		} else {
-			if err := fsdb.iCache.Del(utils.BytesToUint64(entry.Key)); err != nil {
-				fsdb.Close()
-				return nil, tracerr.Errorf("deleting entry %v from cache failed: %w", entry, err)
-			}
+		cacheItem := &monocache.CacheItem{}
+		if err := cacheItem.Unmarshall(entry.Value); err != nil {
+			return nil, tracerr.Errorf("unmarshalling cache entry failed: %w", err)
 		}
+		fsdb.iCache.Set(cacheItem)
 	}
 	fsdb.iCache.SetAddCallback(func(key uint64, value []byte) error {
 		entry := &wal.Entry{
