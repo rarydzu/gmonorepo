@@ -111,7 +111,6 @@ func (fs *Monofs) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 		fs.log.Errorf("RmDir(GetInode)(%d, %s): %v", op.Parent, op.Name, err)
 		return fuse.EIO
 	}
-	fs.log.Infof("removing inode %s %d", op.Name, inode.ID())
 	if fsdb.InodeDirentType(inode.Attrs.Mode) != fuseutil.DT_Directory {
 		return fuse.ENOTDIR
 	}
@@ -124,7 +123,6 @@ func (fs *Monofs) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 		return fuse.EIO
 	}
 	if children > 0 {
-		fs.log.Infof("RmDir(%d): %v", inode.ID(), fuse.ENOTEMPTY)
 		return fuse.ENOTEMPTY
 	}
 	fs.log.Debugf("RmDir(%d): removing inode", inode.ID())

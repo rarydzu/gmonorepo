@@ -2,9 +2,11 @@ package monofs
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -71,7 +73,6 @@ func bufDialer(context.Context, string) (net.Conn, error) {
 func (t *MonoFSTest) SetUp(ti *TestInfo) {
 	var err error
 	os.Setenv("MONOFS_DEV_RUN", "MonoFSTest")
-	//create t.inodePath
 	t.inodePath, err = os.MkdirTemp("", "monofs_inodepath")
 	AssertEq(nil, err)
 	lis = bufconn.Listen(1024 * 1024)
@@ -121,4 +122,64 @@ func (t *MonoFSTest) StatFs() {
 	AssertEq(nil, err)
 	AssertEq(stat.Blocks, blocksAvailable)
 	AssertEq(stat.Bfree, uint64(float64(blocksAvailable)*0.9))
+}
+
+func CreateAndCheckFileTree(rootPath string) error {
+	if err := os.Mkdir(rootPath+"/bar", 0755); err != nil {
+		return err
+	}
+	if err := os.Mkdir(rootPath+"/bar/baz", 0755); err != nil {
+		return err
+	}
+	if err := os.Mkdir(rootPath+"/bar/baz/qux", 0755); err != nil {
+		return err
+	}
+	file, err := os.Create(rootPath + "/bar/baz/qux/file.txt")
+	if err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	file, err = os.Create(rootPath + "/bar/baz/qux/file2.txt")
+	if err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	filesCnt := 0
+	dirCnt := 0
+	err = filepath.Walk(rootPath+"/bar", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() == true {
+			dirCnt++
+		} else {
+			filesCnt++
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if filesCnt != 2 {
+		return fmt.Errorf("filesCnt != 2")
+	}
+	if dirCnt != 3 {
+		return fmt.Errorf("dirCnt != 3")
+	}
+	return os.RemoveAll(rootPath + "/bar")
+}
+
+func (t MonoFSTest) RewriteFiles() {
+	for i := 0; i < 10; i++ {
+		err := CreateAndCheckFileTree(t.Dir)
+		AssertEq(nil, err)
+		entries, err := fusetesting.ReadDirPicky(t.Dir)
+		AssertEq(nil, err)
+		AssertEq(0, len(entries))
+		time.Sleep(100 * time.Millisecond)
+	}
 }
