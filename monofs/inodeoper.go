@@ -12,6 +12,8 @@ import (
 func (fs *Monofs) MkNode(
 	ctx context.Context,
 	op *fuseops.MkNodeOp) error {
+	fs.locker.Lock(uint64(op.Parent))
+	defer fs.locker.Unlock(uint64(op.Parent))
 	t := fs.Clock.Now()
 	inode := fs.NewInode(op.Parent, op.Name, fsdb.InodeAttributes{
 		Hash: "", // TODO FIXME
@@ -42,6 +44,8 @@ func (fs *Monofs) LookUpInode(
 	ctx context.Context,
 	op *fuseops.LookUpInodeOp) error {
 	// Look up the requested inode.
+	fs.locker.RLock(uint64(op.Parent))
+	defer fs.locker.RUnlock(uint64(op.Parent))
 	inode, err := fs.GetInode(op.Parent, op.Name, true)
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
@@ -60,6 +64,8 @@ func (fs *Monofs) LookUpInode(
 func (fs *Monofs) GetInodeAttributes(
 	ctx context.Context,
 	op *fuseops.GetInodeAttributesOp) error {
+	fs.locker.RLock(uint64(op.Inode))
+	defer fs.locker.RUnlock(uint64(op.Inode))
 	attrs, err := fs.GetInodeAttrs(op.Inode)
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
@@ -74,6 +80,8 @@ func (fs *Monofs) GetInodeAttributes(
 
 // SetInodeAttributes sets the attributes of an inode.
 func (fs *Monofs) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAttributesOp) error {
+	fs.locker.Lock(uint64(op.Inode))
+	defer fs.locker.Unlock(uint64(op.Inode))
 	attrs, err := fs.GetInodeAttrs(op.Inode)
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
@@ -111,6 +119,8 @@ func (fs *Monofs) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAt
 func (fs *Monofs) ForgetInode(
 	ctx context.Context,
 	op *fuseops.ForgetInodeOp) error {
+	fs.locker.Lock(uint64(op.Inode))
+	defer fs.locker.Unlock(uint64(op.Inode))
 	//TODO integrate with last inode
 	return nil
 }

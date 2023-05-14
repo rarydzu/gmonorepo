@@ -15,6 +15,8 @@ import (
 func (fs *Monofs) CreateFile(
 	ctx context.Context,
 	op *fuseops.CreateFileOp) error {
+	fs.locker.Lock(uint64(op.Parent))
+	defer fs.locker.Unlock(uint64(op.Parent))
 	// Create a new inode.
 	i, err := fs.GetInode(op.Parent, op.Name, true)
 	if err == nil {
@@ -53,6 +55,8 @@ func (fs *Monofs) CreateFile(
 func (fs *Monofs) CreateLink(
 	ctx context.Context,
 	op *fuseops.CreateLinkOp) error {
+	fs.locker.Lock(uint64(op.Parent))
+	defer fs.locker.Unlock(uint64(op.Parent))
 	attr, err := fs.GetInodeAttrs(op.Target)
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
@@ -80,6 +84,8 @@ func (fs *Monofs) CreateLink(
 func (fs *Monofs) CreateSymlink(
 	ctx context.Context,
 	op *fuseops.CreateSymlinkOp) error {
+	fs.locker.Lock(uint64(op.Parent))
+	defer fs.locker.Unlock(uint64(op.Parent))
 	t := fs.Clock.Now()
 	inode := fs.NewInode(op.Parent, op.Name,
 		fsdb.InodeAttributes{
@@ -109,6 +115,8 @@ func (fs *Monofs) CreateSymlink(
 func (fs *Monofs) ReadSymlink(
 	ctx context.Context,
 	op *fuseops.ReadSymlinkOp) error {
+	fs.locker.RLock(uint64(op.Inode))
+	defer fs.locker.RUnlock(uint64(op.Inode))
 	attr, err := fs.metadb.GetFsdbInodeAttributes(uint64(op.Inode))
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
@@ -128,6 +136,8 @@ func (fs *Monofs) ReadSymlink(
 func (fs *Monofs) Rename(
 	ctx context.Context,
 	op *fuseops.RenameOp) error {
+	fs.locker.Lock(uint64(op.OldParent))
+	defer fs.locker.Unlock(uint64(op.OldParent))
 	// Look up the source inode.
 	inode, err := fs.GetInode(op.OldParent, op.OldName, true)
 	if err != nil {
@@ -162,6 +172,8 @@ func (fs *Monofs) Rename(
 func (fs *Monofs) Unlink(
 	ctx context.Context,
 	op *fuseops.UnlinkOp) error {
+	fs.locker.Lock(uint64(op.Parent))
+	defer fs.locker.Unlock(uint64(op.Parent))
 	// Look up the source inode.
 	inode, err := fs.GetInode(op.Parent, op.Name, true)
 	if err != nil {
@@ -197,6 +209,8 @@ func (fs *Monofs) Unlink(
 func (fs *Monofs) OpenFile(
 	ctx context.Context,
 	op *fuseops.OpenFileOp) error {
+	fs.locker.Lock(uint64(op.Inode))
+	defer fs.locker.Unlock(uint64(op.Inode))
 	_, err := fs.GetInodeAttrs(op.Inode)
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
@@ -214,6 +228,9 @@ func (fs *Monofs) ReadFile(
 	ctx context.Context,
 	op *fuseops.ReadFileOp) error {
 	var err error
+	// probably global lock is sufficient
+	fs.locker.RLock(uint64(op.Inode))
+	defer fs.locker.RUnlock(uint64(op.Inode))
 	// Look up the file.
 	handle, ok := fs.fileHandles[op.Handle]
 	if !ok {
@@ -228,6 +245,9 @@ func (fs *Monofs) ReadFile(
 func (fs *Monofs) WriteFile(
 	ctx context.Context,
 	op *fuseops.WriteFileOp) error {
+	// probably global lock is sufficient
+	fs.locker.Lock(uint64(op.Inode))
+	defer fs.locker.Unlock(uint64(op.Inode))
 	handle, ok := fs.fileHandles[op.Handle]
 	if !ok {
 		return fuse.EINVAL
@@ -241,6 +261,8 @@ func (fs *Monofs) WriteFile(
 func (fs *Monofs) FlushFile(
 	ctx context.Context,
 	op *fuseops.FlushFileOp) error {
+	fs.locker.Lock(uint64(op.Inode))
+	defer fs.locker.Unlock(uint64(op.Inode))
 	handle, ok := fs.fileHandles[op.Handle]
 	if !ok {
 		return fuse.EINVAL
@@ -262,6 +284,8 @@ func (fs *Monofs) ReleaseFileHandle(
 func (fs *Monofs) SyncFile(
 	ctx context.Context,
 	op *fuseops.SyncFileOp) error {
+	fs.locker.Lock(uint64(op.Inode))
+	defer fs.locker.Unlock(uint64(op.Inode))
 	handle, ok := fs.fileHandles[op.Handle]
 	if !ok {
 		return fuse.EINVAL

@@ -161,24 +161,24 @@ func (db *Fsdb) Close() error {
 
 // AddInode stores an inode
 func (db *Fsdb) AddInode(inode *Inode, attr bool) error {
-	itxn := db.istore.NewTransaction(true)
-	defer itxn.Discard()
-	inodeKey := DbInodeKey(inode.ParentID, inode.Name)
-	if err := itxn.Set(inodeKey, inode.DbID()); err != nil {
-		return db.MarkAsFailed(err)
-	}
-	if attr {
-		buf, err := inode.Attrs.Marshall()
-		if err != nil {
+	err := db.istore.Update(func(txn *badger.Txn) error {
+		inodeKey := DbInodeKey(inode.ParentID, inode.Name)
+		if err := txn.Set(inodeKey, inode.DbID()); err != nil {
 			return err
 		}
-		err = db.iCache.Add(inode.InodeID, buf, 0)
-		if err != nil {
-			return err
+		if attr {
+			buf, err := inode.Attrs.Marshall()
+			if err != nil {
+				return err
+			}
+			err = db.iCache.Add(inode.InodeID, buf, 0)
+			if err != nil {
+				return err
+			}
 		}
-
-	}
-	return db.MarkAsFailed(itxn.Commit())
+		return nil
+	})
+	return db.MarkAsFailed(err)
 }
 
 // GetInode gets an inode

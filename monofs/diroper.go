@@ -14,7 +14,8 @@ import (
 func (fs *Monofs) MkDir(
 	ctx context.Context,
 	op *fuseops.MkDirOp) error {
-
+	fs.locker.Lock(uint64(op.Parent))
+	defer fs.locker.Unlock(uint64(op.Parent))
 	_, err := fs.GetInode(op.Parent, op.Name, false)
 	if err == nil {
 		fs.log.Infof("MkDir(%d:%s): already exists", op.Parent, op.Name)
@@ -51,6 +52,8 @@ func (fs *Monofs) MkDir(
 func (fs *Monofs) OpenDir(
 	ctx context.Context,
 	op *fuseops.OpenDirOp) error {
+	fs.locker.RLock(uint64(op.Inode))
+	defer fs.locker.RUnlock(uint64(op.Inode))
 	// Open the directory.
 	attr, err := fs.GetInodeAttrs(op.Inode)
 	if err != nil {
@@ -73,6 +76,8 @@ func (fs *Monofs) OpenDir(
 func (fs *Monofs) ReadDir(
 	ctx context.Context,
 	op *fuseops.ReadDirOp) error {
+	fs.locker.RLock(uint64(op.Inode))
+	defer fs.locker.RUnlock(uint64(op.Inode))
 	// Look up the directory.
 	dir, ok := fs.dirHandles[op.Handle]
 	if !ok {
@@ -116,6 +121,8 @@ func (fs *Monofs) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 		fs.log.Errorf("RmDir(GetInode)(%d, %s): %v", op.Parent, op.Name, err)
 		return fuse.EIO
 	}
+	fs.locker.Lock(inode.InodeID)
+	defer fs.locker.Unlock(inode.InodeID)
 	if fsdb.InodeDirentType(inode.Attrs.Mode) != fuseutil.DT_Directory {
 		return fuse.ENOTDIR
 	}

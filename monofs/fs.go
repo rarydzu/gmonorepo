@@ -2,12 +2,15 @@ package monofs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/user"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
+	monohash "github.com/rarydzu/gmonorepo/hash"
 	"github.com/rarydzu/gmonorepo/monofs/config"
 	monodir "github.com/rarydzu/gmonorepo/monofs/dir"
 	monofile "github.com/rarydzu/gmonorepo/monofs/file"
@@ -40,10 +43,12 @@ type Monofs struct {
 	uid             uint32
 	gid             uint32
 	lastInodeEngine *lastinode.LastInodeEngine
+	locker          *monohash.Hash
 }
 
 // NewMonoFS Create a new file system backed by the given directory.
 func NewMonoFS(config *config.Config, logger *zap.SugaredLogger) (fuse.Server, error) {
+	var limit syscall.Rlimit
 	metadb, err := fsdb.New(config)
 	if err != nil {
 		return nil, err
@@ -64,7 +69,9 @@ func NewMonoFS(config *config.Config, logger *zap.SugaredLogger) (fuse.Server, e
 	if err := lastInodeEngine.Init(); err != nil {
 		return nil, err
 	}
-
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &limit); err != nil {
+		return nil, fmt.Errorf("getrlimit: %v", err)
+	}
 	fs := &Monofs{
 		Name:            config.FilesystemName,
 		metadb:          metadb,
@@ -76,6 +83,7 @@ func NewMonoFS(config *config.Config, logger *zap.SugaredLogger) (fuse.Server, e
 		uid:             uint32(uid),
 		gid:             uint32(gid),
 		lastInodeEngine: lastInodeEngine,
+		locker:          monohash.New(uint64(limit.Cur)),
 	}
 	_, err = fs.GetInode(fuseops.RootInodeID, "", true)
 	if err != nil {
