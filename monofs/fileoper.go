@@ -170,7 +170,6 @@ func (fs *Monofs) Unlink(
 		fs.log.Errorf("Unlink(GetInode)(%d:%s): %v", op.Parent, op.Name, err)
 		return fuse.EIO
 	}
-	fs.log.Debugf("Unlink(%d:%s)", op.Parent, op.Name)
 	err = fs.DeleteInode(inode, false)
 	if err != nil {
 		fs.log.Errorf("Unlink(DeleteInode)(%d:%s): %v", inode.ParentID, inode.Name, err)
@@ -179,20 +178,17 @@ func (fs *Monofs) Unlink(
 	if inode.Attrs.Mode&os.ModeSymlink != os.ModeSymlink {
 		if inode.Attrs.Nlink > 1 {
 			inode.Attrs.Nlink--
-			fs.log.Debugf("Unlink NLINK = %d (%d:%s)", inode.Attrs.Nlink, op.Parent, op.Name)
 			if err = fs.CreateInodeAttrs(inode); err != nil {
 				fs.log.Errorf("Unlink(CreateInodeAttrs)(%d): %v", inode.ID(), err)
 				return fuse.EIO
 			}
 		} else {
-			fs.log.Debugf("Unlink NLINK = 1 (%d:%s)", op.Parent, op.Name)
 			if err = fs.DeleteInodeAttrs(inode.ID()); err != nil {
 				fs.log.Errorf("Unlink(DeleteInodeAttrs)(%d): %v", inode.ID(), err)
 				return fuse.EIO
 			}
 		}
 	}
-	fs.log.Infof("Unlink(%d:%s) done", op.Parent, op.Name)
 	return nil
 }
 
