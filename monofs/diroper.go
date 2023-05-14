@@ -25,7 +25,7 @@ func (fs *Monofs) MkDir(
 		fsdb.InodeAttributes{
 			Hash: "", // TODO FIXME
 			InodeAttributes: fuseops.InodeAttributes{
-				Size:  0,
+				Size:  4096,
 				Nlink: 1,
 				Mode:  op.Mode,
 				Rdev:  0,
@@ -40,6 +40,7 @@ func (fs *Monofs) MkDir(
 	if err = fs.AddInode(inode, true); err != nil {
 		return err
 	}
+	fs.log.Debugf("MkDir(%d:%d:%s): %v", inode.InodeID, op.Parent, op.Name, err)
 	// Report the inode's attributes.
 	op.Entry.Child = inode.ID()
 	op.Entry.Attributes = inode.Attrs.InodeAttributes
@@ -77,6 +78,10 @@ func (fs *Monofs) ReadDir(
 	if !ok {
 		return fuse.ENOTDIR
 	}
+	if op.Inode != dir.GetInodeID() {
+		fs.log.Errorf("ReadDir(%d): wrong inode %d", op.Inode, dir.GetInodeID())
+		return fuse.EINVAL
+	}
 	// Read the directory entries.
 	for _, inode := range dir.Entries(op.Offset, len(op.Dst)) {
 		// Report the entry.
@@ -90,13 +95,13 @@ func (fs *Monofs) ReadDir(
 			op.Dst[op.BytesRead:],
 			dirent,
 		)
+		// Advance the offset.
+		dir.UpdateLast(inode.Name)
+		op.Offset++
 		// Stop if we've filled the buffer.
 		if op.BytesRead == len(op.Dst) {
 			break
 		}
-		// Advance the offset.
-		dir.UpdateLast(inode.Name)
-		op.Offset++
 	}
 	return nil
 }
@@ -114,7 +119,8 @@ func (fs *Monofs) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	if fsdb.InodeDirentType(inode.Attrs.Mode) != fuseutil.DT_Directory {
 		return fuse.ENOTDIR
 	}
-	children, err := fs.metadb.GetChildrenCount(uint64(op.Parent), op.Name)
+	fs.log.Debugf("RmDir(%d:%d:%s)", inode.InodeID, op.Parent, op.Name)
+	children, err := fs.metadb.GetChildrenCount(inode.InodeID)
 	if err != nil {
 		if err != fsdb.ErrNoSuchInode {
 			return fuse.ENOENT

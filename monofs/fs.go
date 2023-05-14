@@ -12,6 +12,7 @@ import (
 	monodir "github.com/rarydzu/gmonorepo/monofs/dir"
 	monofile "github.com/rarydzu/gmonorepo/monofs/file"
 	"github.com/rarydzu/gmonorepo/monofs/fsdb"
+	"github.com/rarydzu/gmonorepo/monofs/lastinode"
 	"go.uber.org/zap"
 
 	"github.com/jacobsa/fuse"
@@ -26,18 +27,19 @@ const (
 
 type Monofs struct {
 	fuseutil.NotImplementedFileSystem
-	Name        string
-	log         *zap.SugaredLogger
-	metadb      *fsdb.Fsdb
-	nextInode   fuseops.InodeID
-	files       map[fuseops.InodeID]*monofile.FsFile
-	fileHandles map[fuseops.HandleID]*monofile.FsFile
-	dirHandles  map[fuseops.HandleID]*monodir.FsDir
-	nextHandle  fuseops.HandleID
-	lock        sync.RWMutex
-	Clock       timeutil.Clock
-	uid         uint32
-	gid         uint32
+	Name            string
+	log             *zap.SugaredLogger
+	metadb          *fsdb.Fsdb
+	nextInode       fuseops.InodeID
+	files           map[fuseops.InodeID]*monofile.FsFile
+	fileHandles     map[fuseops.HandleID]*monofile.FsFile
+	dirHandles      map[fuseops.HandleID]*monodir.FsDir
+	nextHandle      fuseops.HandleID
+	lock            sync.RWMutex
+	Clock           timeutil.Clock
+	uid             uint32
+	gid             uint32
+	lastInodeEngine *lastinode.LastInodeEngine
 }
 
 // NewMonoFS Create a new file system backed by the given directory.
@@ -58,21 +60,23 @@ func NewMonoFS(config *config.Config, logger *zap.SugaredLogger) (fuse.Server, e
 	if err != nil {
 		return nil, err
 	}
-
-	fs := &Monofs{
-		Name:        config.FilesystemName,
-		metadb:      metadb,
-		log:         logger,
-		Clock:       timeutil.RealClock(),
-		files:       make(map[fuseops.InodeID]*monofile.FsFile),
-		fileHandles: make(map[fuseops.HandleID]*monofile.FsFile),
-		dirHandles:  make(map[fuseops.HandleID]*monodir.FsDir),
-		uid:         uint32(uid),
-		gid:         uint32(gid),
+	lastInodeEngine := lastinode.New(config.Path, metadb.GetIStoreHandler())
+	if err := lastInodeEngine.Init(); err != nil {
+		return nil, err
 	}
 
-	// Create the root inode.
-	rootInode := fs.NextInode()
+	fs := &Monofs{
+		Name:            config.FilesystemName,
+		metadb:          metadb,
+		log:             logger,
+		Clock:           timeutil.RealClock(),
+		files:           make(map[fuseops.InodeID]*monofile.FsFile),
+		fileHandles:     make(map[fuseops.HandleID]*monofile.FsFile),
+		dirHandles:      make(map[fuseops.HandleID]*monodir.FsDir),
+		uid:             uint32(uid),
+		gid:             uint32(gid),
+		lastInodeEngine: lastInodeEngine,
+	}
 	_, err = fs.GetInode(fuseops.RootInodeID, "", true)
 	if err != nil {
 		if err != fsdb.ErrNoSuchInode {
@@ -80,6 +84,7 @@ func NewMonoFS(config *config.Config, logger *zap.SugaredLogger) (fuse.Server, e
 		}
 		// Create the root directory.
 		t := fs.Clock.Now()
+		rootInode := fs.NextInode()
 		dbRoot := fsdb.NewInode(uint64(rootInode), fuseops.RootInodeID, "", fsdb.InodeAttributes{
 			Hash: "",
 			InodeAttributes: fuseops.InodeAttributes{
@@ -99,6 +104,10 @@ func NewMonoFS(config *config.Config, logger *zap.SugaredLogger) (fuse.Server, e
 			return nil, err
 		}
 	}
+	fs.GetLastInode()
+	fs.lock.RLock()
+	fs.log.Debugf("Last inode: %v", fs.nextInode)
+	fs.lock.RUnlock()
 	return fuseutil.NewFileSystemServer(fs), nil
 }
 
@@ -129,8 +138,16 @@ func (fs *Monofs) StatFS(
 func (fs *Monofs) NextInode() fuseops.InodeID {
 	fs.lock.Lock()
 	fs.nextInode++
+	fs.lastInodeEngine.StoreLastInode(fs.nextInode)
 	fs.lock.Unlock()
 	return fs.nextInode
+}
+
+// GetLastInode get last inode from lastinode engine
+func (fs *Monofs) GetLastInode() {
+	fs.lock.Lock()
+	defer fs.lock.Unlock()
+	fs.nextInode = fs.lastInodeEngine.GetLastInode()
 }
 
 // NextHandle returns the next available handle ID.
@@ -193,5 +210,8 @@ func (fs *Monofs) patchTime(attr *fuseops.InodeAttributes) time.Time {
 func (fs *Monofs) Destroy() {
 	if err := fs.metadb.Close(); err != nil {
 		fs.log.Errorf("Error closing metadb: %v", err)
+	}
+	if err := fs.lastInodeEngine.Close(); err != nil {
+		fs.log.Errorf("Error closing lastInodeEngine: %v", err)
 	}
 }

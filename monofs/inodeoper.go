@@ -47,7 +47,7 @@ func (fs *Monofs) LookUpInode(
 		if err == fsdb.ErrNoSuchInode {
 			return fuse.ENOENT
 		}
-		fs.log.Debugf("LookUpInode: %v", err)
+		fs.log.Errorf("LookUpInode: %v", err)
 		return fuse.EIO
 	}
 	// Report the inode's attributes.
@@ -79,7 +79,6 @@ func (fs *Monofs) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAt
 		if err == fsdb.ErrNoSuchInode {
 			fs.log.Debugf("SetInodeAttributes(%d): %v", op.Inode, err)
 			return nil
-			//return fuse.ENOENT
 		}
 		fs.log.Errorf("SetInodeAttributes(%d): %v", op.Inode, err)
 		return fuse.EIO
@@ -102,7 +101,6 @@ func (fs *Monofs) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAt
 	if op.Mtime != nil {
 		attrs.Mtime = *op.Mtime
 	}
-	fs.log.Infof("SetInodeAttributes(%d): %+v", op.Inode, attrs)
 	if err := fs.UpdateInodeAttrs(op.Inode, attrs); err != nil {
 		return fuse.EIO
 	}
@@ -113,6 +111,6 @@ func (fs *Monofs) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAt
 func (fs *Monofs) ForgetInode(
 	ctx context.Context,
 	op *fuseops.ForgetInodeOp) error {
-	fs.log.Debugf("ForgetInode(%d)", op.Inode)
+	//TODO integrate with last inode
 	return nil
 }

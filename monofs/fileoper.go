@@ -16,9 +16,10 @@ func (fs *Monofs) CreateFile(
 	ctx context.Context,
 	op *fuseops.CreateFileOp) error {
 	// Create a new inode.
-	_, err := fs.GetInode(op.Parent, op.Name, true)
+	i, err := fs.GetInode(op.Parent, op.Name, true)
 	if err == nil {
-		//TODO change attributes ?
+		op.Entry.Child = i.ID()
+		op.Entry.Attributes = i.Attrs.InodeAttributes
 		return nil
 	}
 	t := fs.Clock.Now()

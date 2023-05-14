@@ -40,3 +40,8 @@ func (dir *FsDir) Entries(location fuseops.DirOffset, size int) []*fsdb.Inode {
 func (dir *FsDir) UpdateLast(name string) {
 	dir.lastEntry = name
 }
+
+// GetInodeID returns inode id
+func (dir *FsDir) GetInodeID() fuseops.InodeID {
+	return dir.inode
+}

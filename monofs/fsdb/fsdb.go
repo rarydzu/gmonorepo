@@ -20,7 +20,6 @@ import (
 	"github.com/ztrue/tracerr"
 )
 
-//TODO catch errors from callbacks and have backup scenario where entries are stored directly in db
 //TODO add caching layer for parent,names pairs with ttl whcih can speed up dir lookups
 
 var ErrNoSuchInode = errors.New("not such inode")
@@ -125,11 +124,11 @@ func New(config *config.Config) (*Fsdb, error) {
 			select {
 			case <-ticker.C:
 				err := istore.RunValueLogGC(0.7)
-				if err != nil {
+				if err != nil && !errors.Is(err, badger.ErrNoRewrite) {
 					log.Printf("GC: %v", err)
 				}
 				err = astore.RunValueLogGC(0.7)
-				if err != nil {
+				if err != nil && !errors.Is(err, badger.ErrNoRewrite) {
 					log.Printf("GC: %v", err)
 				}
 			case <-fsdb.Quit:
@@ -139,6 +138,11 @@ func New(config *config.Config) (*Fsdb, error) {
 		}
 	}()
 	return fsdb, nil
+}
+
+// GetIStoreHandler returns a handler to the istore
+func (db *Fsdb) GetIStoreHandler() *badger.DB {
+	return db.istore
 }
 
 // Close closes the fsdb
@@ -361,14 +365,14 @@ func (db *Fsdb) CheckIfFailed() bool {
 }
 
 // GetChildren gets the children of an inode
-func (db *Fsdb) GetChildren(parentID uint64, lastEntry string, limit int) ([]*Inode, error) {
+func (db *Fsdb) GetChildren(inodeID uint64, lastEntry string, limit int) ([]*Inode, error) {
 	values := []*Inode{}
 	tmpValues := []*Inode{}
 	limitCounter := 0
 	// add . and .. dir entries if name is ""
 	if lastEntry == "" {
 		inode := &Inode{
-			InodeID: parentID,
+			InodeID: inodeID,
 			Name:    ".",
 			Attrs:   InodeAttributes{},
 		}
@@ -398,11 +402,11 @@ func (db *Fsdb) GetChildren(parentID uint64, lastEntry string, limit int) ([]*In
 	err := db.istore.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
-		seekPrefix := []byte(fmt.Sprintf("#%d:%s~", parentID, lastEntry))
+		seekPrefix := []byte(fmt.Sprintf("#%d:%s~", inodeID, lastEntry))
 		if lastEntry == "" {
-			seekPrefix = []byte(fmt.Sprintf("#%d:", parentID))
+			seekPrefix = []byte(fmt.Sprintf("#%d:", inodeID))
 		}
-		validPrefix := []byte(fmt.Sprintf("#%d:", parentID))
+		validPrefix := []byte(fmt.Sprintf("#%d:", inodeID))
 		for it.Seek(seekPrefix); it.ValidForPrefix(validPrefix); it.Next() {
 			if limitCounter >= limit {
 				break
@@ -410,17 +414,18 @@ func (db *Fsdb) GetChildren(parentID uint64, lastEntry string, limit int) ([]*In
 			item := it.Item()
 			k := item.Key()
 			if err := item.Value(func(v []byte) error {
+				keySlice := strings.Split(string(k), ":")
 				//extract name from key
-				name := strings.Split(string(k), ":")[1]
+				name := keySlice[1]
 				if len(name) == 0 {
 					return nil
 				}
 				// extract inodeID from value
-				inodeID := utils.BytesToUint64(v)
+				iID := utils.BytesToUint64(v)
 				// add to tmpValues
 				inode := &Inode{
-					InodeID:  inodeID,
-					ParentID: parentID,
+					InodeID:  iID,
+					ParentID: inodeID,
 					Name:     name,
 					Attrs:    InodeAttributes{},
 				}
@@ -459,16 +464,13 @@ func (db *Fsdb) GetChildren(parentID uint64, lastEntry string, limit int) ([]*In
 }
 
 // GetChildrenCount gets the number of children of an inode
-func (db *Fsdb) GetChildrenCount(parentID uint64, name string) (int, error) {
+func (db *Fsdb) GetChildrenCount(inodeID uint64) (int, error) {
 	count := 0
 	err := db.istore.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
-		seekPrefix := []byte(fmt.Sprintf("#%d:%s~", parentID, name))
-		if name == "" {
-			seekPrefix = []byte(fmt.Sprintf("#%d:", parentID))
-		}
-		validPrefix := []byte(fmt.Sprintf("#%d:", parentID))
+		seekPrefix := []byte(fmt.Sprintf("#%d:", inodeID))
+		validPrefix := []byte(fmt.Sprintf("#%d:", inodeID))
 		for it.Seek(seekPrefix); it.ValidForPrefix(validPrefix); it.Next() {
 			count++
 		}
