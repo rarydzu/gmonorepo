@@ -205,9 +205,10 @@ func (db *Fsdb) GetInode(parent uint64, name string, attr bool) (*Inode, error) 
 			return nil
 		})
 	if err != nil {
-		if nutsdb.IsBucketNotFound(err) || nutsdb.IsKeyNotFound(err) {
+		if errors.Is(err, nutsdb.ErrNotFoundKey) || nutsdb.IsBucketNotFound(err) || nutsdb.IsKeyNotFound(err) {
 			return nil, ErrNoSuchInode
 		}
+		log.Printf("GetInode: %\n", err)
 		return nil, db.MarkAsFailed(err)
 	}
 	inode.ParentID = parent
@@ -251,7 +252,7 @@ func (db *Fsdb) DeleteInode(inode *Inode, attr bool) error {
 	inodeKey := DbInodeKey(inode.ParentID, inode.Name)
 	if err := itxn.Delete(bucket, inodeKey); err != nil {
 		itxn.Rollback()
-		if nutsdb.IsBucketNotFound(err) || nutsdb.IsKeyNotFound(err) {
+		if nutsdb.IsBucketNotFound(err) || nutsdb.IsKeyNotFound(err) || errors.Is(err, nutsdb.ErrNotFoundKey) {
 			return ErrNoSuchInode
 		}
 		return err
@@ -501,6 +502,9 @@ func (db *Fsdb) GetChildrenCount(inodeID uint64) (int, error) {
 			prefix := []byte(fmt.Sprintf("#%d:", inodeID))
 			entries, _, err := tx.PrefixScan(bucket, prefix, 0, 3)
 			if err != nil {
+				if nutsdb.IsPrefixScan(err) {
+					return nil
+				}
 				return err
 			}
 			c = len(entries)

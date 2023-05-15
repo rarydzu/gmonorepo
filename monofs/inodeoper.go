@@ -2,6 +2,7 @@ package monofs
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
@@ -44,7 +45,7 @@ func (fs *Monofs) LookUpInode(
 	// Look up the requested inode.
 	inode, err := fs.GetInode(op.Parent, op.Name, true)
 	if err != nil {
-		if err == fsdb.ErrNoSuchInode {
+		if errors.Is(err, fsdb.ErrNoSuchInode) {
 			return fuse.ENOENT
 		}
 		fs.log.Errorf("LookUpInode: %v", err)
