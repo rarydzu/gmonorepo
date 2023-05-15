@@ -12,6 +12,7 @@ import (
 	badger "github.com/dgraph-io/badger/v3"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/jacobsa/fuse/fuseutil"
+	"github.com/nutsdb/nutsdb"
 	monostat "github.com/rarydzu/gmonorepo/monoclient/stat"
 	"github.com/rarydzu/gmonorepo/monofs/config"
 	"github.com/rarydzu/gmonorepo/monofs/monocache"
@@ -20,12 +21,15 @@ import (
 	"github.com/ztrue/tracerr"
 )
 
-//TODO add caching layer for parent,names pairs with ttl whcih can speed up dir lookups
+// TODO add caching layer for parent,names pairs with ttl whcih can speed up dir lookups
+const (
+	bucket = "inodes"
+)
 
 var ErrNoSuchInode = errors.New("not such inode")
 
 type Fsdb struct {
-	istore     *badger.DB
+	istore     *nutsdb.DB
 	astore     *badger.DB
 	Quit       chan bool
 	path       string
@@ -38,7 +42,7 @@ type Fsdb struct {
 // New creates a new fsdb
 func New(config *config.Config) (*Fsdb, error) {
 	var err error
-	var istore *badger.DB
+	var istore *nutsdb.DB
 	ipath := fmt.Sprintf("%s/inodes", config.Path)
 	apath := fmt.Sprintf("%s/attrs", config.Path)
 	wpath := fmt.Sprintf("%s/wal", config.Path)
@@ -54,7 +58,7 @@ func New(config *config.Config) (*Fsdb, error) {
 	if err != nil {
 		return nil, err
 	}
-	istore, err = badger.Open(badger.DefaultOptions(ipath).WithLogger(nil))
+	istore, err = nutsdb.Open(nutsdb.DefaultOptions, nutsdb.WithDir(ipath))
 	if err != nil {
 		return nil, err
 	}
@@ -123,10 +127,6 @@ func New(config *config.Config) (*Fsdb, error) {
 		for {
 			select {
 			case <-ticker.C:
-				err := istore.RunValueLogGC(0.7)
-				if err != nil && !errors.Is(err, badger.ErrNoRewrite) {
-					log.Printf("GC: %v", err)
-				}
 				err = astore.RunValueLogGC(0.7)
 				if err != nil && !errors.Is(err, badger.ErrNoRewrite) {
 					log.Printf("GC: %v", err)
@@ -141,7 +141,7 @@ func New(config *config.Config) (*Fsdb, error) {
 }
 
 // GetIStoreHandler returns a handler to the istore
-func (db *Fsdb) GetIStoreHandler() *badger.DB {
+func (db *Fsdb) GetIStoreHandler() *nutsdb.DB {
 	return db.istore
 }
 
@@ -161,43 +161,55 @@ func (db *Fsdb) Close() error {
 
 // AddInode stores an inode
 func (db *Fsdb) AddInode(inode *Inode, attr bool) error {
-	itxn := db.istore.NewTransaction(true)
-	defer itxn.Discard()
+	tx, err := db.istore.Begin(true)
+	if err != nil {
+		return fmt.Errorf("begin tx failed - check status of inode database: %w", err)
+	}
+
 	inodeKey := DbInodeKey(inode.ParentID, inode.Name)
-	if err := itxn.Set(inodeKey, inode.DbID()); err != nil {
+	if err = tx.Put(bucket, inodeKey, inode.DbID(), nutsdb.Persistent); err != nil {
+		tx.Rollback()
 		return db.MarkAsFailed(err)
 	}
+	fmt.Printf("AddingInode %q:%q\n", bucket, string(inodeKey))
 	if attr {
 		buf, err := inode.Attrs.Marshall()
 		if err != nil {
+			tx.Rollback()
 			return err
 		}
 		err = db.iCache.Add(inode.InodeID, buf, 0)
 		if err != nil {
+			tx.Rollback()
 			return err
 		}
-
 	}
-	return db.MarkAsFailed(itxn.Commit())
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		return db.MarkAsFailed(err)
+	}
+	return nil
 }
 
 // GetInode gets an inode
 func (db *Fsdb) GetInode(parent uint64, name string, attr bool) (*Inode, error) {
 	var inode Inode
-	itxn := db.istore.NewTransaction(false)
-	defer itxn.Discard()
-	inodeKey := DbInodeKey(parent, name)
-	item, err := itxn.Get(inodeKey)
+	err := db.istore.View(
+		func(tx *nutsdb.Tx) error {
+			inodeKey := DbInodeKey(parent, name)
+			if e, err := tx.Get(bucket, inodeKey); err != nil {
+				return err
+			} else {
+				inode.InodeID = utils.BytesToUint64(e.Value)
+			}
+			return nil
+		})
 	if err != nil {
-		if errors.Is(err, badger.ErrKeyNotFound) {
+		if nutsdb.IsBucketNotFound(err) || nutsdb.IsKeyNotFound(err) {
 			return nil, ErrNoSuchInode
 		}
 		return nil, db.MarkAsFailed(err)
 	}
-	_ = item.Value(func(val []byte) error {
-		inode.InodeID = utils.BytesToUint64(val)
-		return nil
-	})
 	inode.ParentID = parent
 	inode.Name = name
 	if attr {
@@ -231,27 +243,44 @@ func (db *Fsdb) GetInode(parent uint64, name string, attr bool) (*Inode, error) 
 
 // DeleteInode deletes an inode
 func (db *Fsdb) DeleteInode(inode *Inode, attr bool) error {
-	itxn := db.istore.NewTransaction(true)
-	defer itxn.Discard()
+	itxn, err := db.istore.Begin(true)
+	if err != nil {
+		return fmt.Errorf("begin tx failed - check status of inode database: %w", err)
+	}
+
 	inodeKey := DbInodeKey(inode.ParentID, inode.Name)
-	if err := itxn.Delete(inodeKey); err != nil {
-		return db.MarkAsFailed(err)
+	if err := itxn.Delete(bucket, inodeKey); err != nil {
+		itxn.Rollback()
+		if nutsdb.IsBucketNotFound(err) || nutsdb.IsKeyNotFound(err) {
+			return ErrNoSuchInode
+		}
+		return err
 	}
 	if attr {
 		err := db.iCache.Del(inode.InodeID)
 		if err == nil {
-			return db.MarkAsFailed(itxn.Commit())
+			if err := itxn.Commit(); err != nil {
+				itxn.Rollback()
+				return db.MarkAsFailed(err)
+			}
+			return nil
 		}
 		atxn := db.astore.NewTransaction(true)
 		defer atxn.Discard()
 		if err := atxn.Delete(inode.DbID()); err != nil {
+			itxn.Rollback()
 			return db.MarkAsFailed(err)
 		}
 		if err := atxn.Commit(); err != nil {
+			itxn.Rollback()
 			return db.MarkAsFailed(err)
 		}
 	}
-	return db.MarkAsFailed(itxn.Commit())
+	if err := itxn.Commit(); err != nil {
+		itxn.Rollback()
+		return db.MarkAsFailed(err)
+	}
+	return nil
 }
 
 // CreateInodeAttrs stores an inode's attributes
@@ -365,12 +394,11 @@ func (db *Fsdb) CheckIfFailed() bool {
 }
 
 // GetChildren gets the children of an inode
-func (db *Fsdb) GetChildren(inodeID uint64, lastEntry string, limit int) ([]*Inode, error) {
+func (db *Fsdb) GetChildren(inodeID uint64, offset int, limit int) ([]*Inode, int, error) {
 	values := []*Inode{}
 	tmpValues := []*Inode{}
-	limitCounter := 0
 	// add . and .. dir entries if name is ""
-	if lastEntry == "" {
+	if offset == 0 {
 		inode := &Inode{
 			InodeID: inodeID,
 			Name:    ".",
@@ -378,7 +406,7 @@ func (db *Fsdb) GetChildren(inodeID uint64, lastEntry string, limit int) ([]*Ino
 		}
 		i, err := db.GetFsdbInodeAttributes(inode.InodeID)
 		if err != nil {
-			return values, fmt.Errorf("failed to get inode %d attributes: %w", inode.InodeID, err)
+			return values, offset, fmt.Errorf("failed to get inode %d attributes: %w", inode.InodeID, err)
 		}
 		inode.Attrs = i
 		values = append(values, inode)
@@ -393,90 +421,94 @@ func (db *Fsdb) GetChildren(inodeID uint64, lastEntry string, limit int) ([]*Ino
 		}
 		pi, err := db.GetFsdbInodeAttributes(parentInode.InodeID)
 		if err != nil {
-			return values, fmt.Errorf("failed to get inode %d attributes: %w", parentInode.InodeID, err)
+			return values, offset, fmt.Errorf("failed to get inode %d attributes: %w", parentInode.InodeID, err)
 		}
 		parentInode.Attrs = pi
 		values = append(values, parentInode)
-		limitCounter = 2
 	}
-	err := db.istore.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-		seekPrefix := []byte(fmt.Sprintf("#%d:%s~", inodeID, lastEntry))
-		if lastEntry == "" {
-			seekPrefix = []byte(fmt.Sprintf("#%d:", inodeID))
-		}
-		validPrefix := []byte(fmt.Sprintf("#%d:", inodeID))
-		for it.Seek(seekPrefix); it.ValidForPrefix(validPrefix); it.Next() {
-			if limitCounter >= limit {
-				break
-			}
-			item := it.Item()
-			k := item.Key()
-			if err := item.Value(func(v []byte) error {
-				keySlice := strings.Split(string(k), ":")
-				//extract name from key
-				name := keySlice[1]
-				if len(name) == 0 {
-					return nil
-				}
-				// extract inodeID from value
-				iID := utils.BytesToUint64(v)
-				// add to tmpValues
-				inode := &Inode{
-					InodeID:  iID,
-					ParentID: inodeID,
-					Name:     name,
-					Attrs:    InodeAttributes{},
-				}
-				tmpValues = append(tmpValues, inode)
-				limitCounter++
+	retOffset := 0
+	err := db.istore.View(func(txn *nutsdb.Tx) error {
+		prefix := []byte(fmt.Sprintf("#%d:", inodeID))
+		entries, _, err := txn.PrefixScan(bucket, prefix, offset, limit)
+		if err != nil {
+			if nutsdb.IsPrefixScan(err) {
 				return nil
-			}); err != nil {
-				return err
 			}
+			return err
+		}
+		retOffset = len(entries)
+		for _, e := range entries {
+			kSlice := strings.Split(string(e.Key), ":")
+			name := kSlice[1]
+			if len(name) == 0 {
+				continue
+			}
+			iid := utils.BytesToUint64(e.Value)
+			inode := &Inode{
+				InodeID:  iid,
+				ParentID: inodeID,
+				Name:     name,
+				Attrs:    InodeAttributes{},
+			}
+			tmpValues = append(tmpValues, inode)
 		}
 		return nil
 	})
+	if err != nil {
+		return values, retOffset, err
+	}
 	for _, inode := range tmpValues {
 		val, err := db.iCache.Get(inode.InodeID)
 		if err == nil {
 			if err := inode.Attrs.Unmarshall(val); err != nil {
-				return values, err
+				return values, retOffset, err
 			}
 			values = append(values, inode)
 			continue
 		}
-		err = db.astore.View(func(txn *badger.Txn) error {
-			item, err := txn.Get(inode.DbID())
-			if err != nil {
-				return err
-			}
-			return item.Value(func(val []byte) error {
-				return inode.Attrs.Unmarshall(val)
+		if errors.Is(err, monocache.ErrKeyNotFound) {
+			err = db.astore.View(func(txn *badger.Txn) error {
+				item, err := txn.Get(inode.DbID())
+				if err != nil {
+					return err
+				}
+				return item.Value(func(val []byte) error {
+					return inode.Attrs.Unmarshall(val)
+				})
 			})
-		})
-		if err == nil {
+			if err != nil {
+				break
+			}
 			values = append(values, inode)
+		} else if errors.Is(err, monocache.ErrKeyDeleted) {
+			continue
+		} else {
+			break
 		}
 	}
-	return values, err
+	// we only returned 2 entries "." and ".." we need to advance retOffset by 1 so next call will not loop
+	if len(tmpValues) == 0 && len(values) == 2 {
+		retOffset = 1
+	}
+	return values, retOffset, err
 }
 
 // GetChildrenCount gets the number of children of an inode
 func (db *Fsdb) GetChildrenCount(inodeID uint64) (int, error) {
-	count := 0
-	err := db.istore.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-		seekPrefix := []byte(fmt.Sprintf("#%d:", inodeID))
-		validPrefix := []byte(fmt.Sprintf("#%d:", inodeID))
-		for it.Seek(seekPrefix); it.ValidForPrefix(validPrefix); it.Next() {
-			count++
-		}
-		return nil
-	})
-	return count, err
+	c := 0
+	if err := db.istore.View(
+		func(tx *nutsdb.Tx) error {
+			prefix := []byte(fmt.Sprintf("#%d:", inodeID))
+			entries, _, err := tx.PrefixScan(bucket, prefix, 0, 3)
+			if err != nil {
+				return err
+			}
+			c = len(entries)
+			return nil
+		}); err != nil {
+		return c, err
+	}
+	return c, nil
 }
 
 // Fsck check databse for errors

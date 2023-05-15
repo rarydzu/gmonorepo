@@ -2,6 +2,8 @@ package monofs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/user"
 	"strconv"
@@ -79,8 +81,8 @@ func NewMonoFS(config *config.Config, logger *zap.SugaredLogger) (fuse.Server, e
 	}
 	_, err = fs.GetInode(fuseops.RootInodeID, "", true)
 	if err != nil {
-		if err != fsdb.ErrNoSuchInode {
-			return nil, err
+		if !errors.Is(err, fsdb.ErrNoSuchInode) {
+			return nil, fmt.Errorf("failed to get root inode: %v", err)
 		}
 		// Create the root directory.
 		t := fs.Clock.Now()

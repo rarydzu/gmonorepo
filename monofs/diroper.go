@@ -65,7 +65,7 @@ func (fs *Monofs) OpenDir(
 	if fsdb.InodeDirentType(attr.Mode) != fuseutil.DT_Directory {
 		return fuse.ENOTDIR
 	}
-	fs.dirHandles[op.Handle] = monodir.New(fs.metadb, op.Inode, fs.log)
+	fs.dirHandles[op.Handle] = monodir.New(fs.metadb, op.Inode)
 	return nil
 }
 
@@ -74,6 +74,10 @@ func (fs *Monofs) ReadDir(
 	ctx context.Context,
 	op *fuseops.ReadDirOp) error {
 	// Look up the directory.
+	zeroStart := true
+	if op.Offset != 0 {
+		zeroStart = false
+	}
 	dir, ok := fs.dirHandles[op.Handle]
 	if !ok {
 		return fuse.ENOTDIR
@@ -83,7 +87,12 @@ func (fs *Monofs) ReadDir(
 		return fuse.EINVAL
 	}
 	// Read the directory entries.
-	for _, inode := range dir.Entries(op.Offset, len(op.Dst)) {
+	inodeEntries, err := dir.Entries(op.Offset, len(op.Dst))
+	if err != nil {
+		fs.log.Errorf("ReadDir(%d): %v", op.Inode, err)
+		return fuse.EIO
+	}
+	for _, inode := range inodeEntries {
 		// Report the entry.
 		dirent := fuseutil.Dirent{
 			Offset: op.Offset,
@@ -95,13 +104,22 @@ func (fs *Monofs) ReadDir(
 			op.Dst[op.BytesRead:],
 			dirent,
 		)
-		// Advance the offset.
-		dir.UpdateLast(inode.Name)
-		op.Offset++
 		// Stop if we've filled the buffer.
 		if op.BytesRead == len(op.Dst) {
+			//if we start listing we need to consider the first two generated entries "." and ".."
+			offset := int(op.Offset)
+			if zeroStart {
+				if op.Offset > 2 {
+					offset = -2
+				} else {
+					offset = 0
+				}
+			}
+			dir.UpdateOffset(offset)
 			break
 		}
+		// Advance the offset.
+		op.Offset++
 	}
 	return nil
 }
@@ -131,7 +149,6 @@ func (fs *Monofs) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	if children > 0 {
 		return fuse.ENOTEMPTY
 	}
-	fs.log.Debugf("RmDir(%d): removing inode", inode.ID())
 	if err = fs.metadb.DeleteInode(inode, true); err != nil {
 		fs.log.Errorf("RmDir(RemoveInode)(%d): %v", inode.ID(), err)
 		return fuse.EIO

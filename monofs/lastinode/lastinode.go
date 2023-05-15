@@ -7,10 +7,12 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/jacobsa/fuse/fuseops"
+	"github.com/nutsdb/nutsdb"
 	"github.com/rarydzu/gmonorepo/utils"
 )
+
+const bucket = "inodes"
 
 type LastInodeEngine struct {
 	Path       string
@@ -21,10 +23,10 @@ type LastInodeEngine struct {
 	shutdown     chan bool
 	lastFile     *os.File
 	rlock        sync.RWMutex
-	db           *badger.DB
+	db           *nutsdb.DB
 }
 
-func New(path string, db *badger.DB) *LastInodeEngine {
+func New(path string, db *nutsdb.DB) *LastInodeEngine {
 	return &LastInodeEngine{
 		LastInode: 0,
 		Path:      path,
@@ -83,28 +85,29 @@ func (l *LastInodeEngine) addLastInode(inode fuseops.InodeID) error {
 
 func (l *LastInodeEngine) getInodeFromDb() error {
 	maxInode := uint64(0)
-	err := l.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			item.Value(func(v []byte) error {
-				if len(v) != 8 {
-					// inode database should only have inodes as values
-					return fmt.Errorf("invalid inode size")
-				}
-				inode := utils.BytesToUint64(v)
-				if inode > maxInode {
-					maxInode = inode
-				}
-				return nil
-			})
-		}
-		return nil
-	})
+	tx, err := l.db.Begin(false)
 	if err != nil {
+		return err
+	}
+	iterator := nutsdb.NewIterator(tx, bucket, nutsdb.IteratorOptions{Reverse: false})
+	ok, err := iterator.SetNext()
+	if err != nil {
+		if nutsdb.IsBucketNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	for ok {
+		inode := utils.BytesToUint64(iterator.Entry().Value)
+		if inode > maxInode {
+			maxInode = inode
+		}
+		ok, err = iterator.SetNext()
+		if err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return err
 	}
 	l.rlock.Lock()
