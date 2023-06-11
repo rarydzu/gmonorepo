@@ -5,89 +5,31 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
-	"strconv"
-	"sync"
 	"time"
 
-	"github.com/rarydzu/gmonorepo/monofs/config"
-	monodir "github.com/rarydzu/gmonorepo/monofs/dir"
-	monofile "github.com/rarydzu/gmonorepo/monofs/file"
 	"github.com/rarydzu/gmonorepo/monofs/fsdb"
-	"github.com/rarydzu/gmonorepo/monofs/lastinode"
-	"go.uber.org/zap"
 
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/jacobsa/fuse/fuseutil"
-	"github.com/jacobsa/timeutil"
 )
 
 const (
 	StatFsDurationDeadline = 200 * time.Millisecond
 )
 
-type Monofs struct {
-	fuseutil.NotImplementedFileSystem
-	Name            string
-	log             *zap.SugaredLogger
-	metadb          *fsdb.Fsdb
-	nextInode       fuseops.InodeID
-	files           map[fuseops.InodeID]*monofile.FsFile
-	fileHandles     map[fuseops.HandleID]*monofile.FsFile
-	dirHandles      map[fuseops.HandleID]*monodir.FsDir
-	nextHandle      fuseops.HandleID
-	lock            sync.RWMutex
-	Clock           timeutil.Clock
-	uid             uint32
-	gid             uint32
-	lastInodeEngine *lastinode.LastInodeEngine
-}
-
-// NewMonoFS Create a new file system backed by the given directory.
-func NewMonoFS(config *config.Config, logger *zap.SugaredLogger) (fuse.Server, error) {
-	metadb, err := fsdb.New(config)
-	if err != nil {
-		return nil, err
-	}
-	user, err := user.Current()
-	if err != nil {
-		return nil, err
-	}
-	uid, err := strconv.ParseUint(user.Uid, 10, 32)
-	if err != nil {
-		return nil, err
-	}
-	gid, err := strconv.ParseUint(user.Gid, 10, 32)
-	if err != nil {
-		return nil, err
-	}
-	lastInodeEngine := lastinode.New(config.Path, metadb.GetIStoreHandler())
-	if err := lastInodeEngine.Init(); err != nil {
-		return nil, err
-	}
-
-	fs := &Monofs{
-		Name:            config.FilesystemName,
-		metadb:          metadb,
-		log:             logger,
-		Clock:           timeutil.RealClock(),
-		files:           make(map[fuseops.InodeID]*monofile.FsFile),
-		fileHandles:     make(map[fuseops.HandleID]*monofile.FsFile),
-		dirHandles:      make(map[fuseops.HandleID]*monodir.FsDir),
-		uid:             uint32(uid),
-		gid:             uint32(gid),
-		lastInodeEngine: lastInodeEngine,
-	}
-	_, err = fs.GetInode(fuseops.RootInodeID, "", true)
+// NewMonoFuseFS Create a new file system backed by the given directory.
+func NewMonoFuseFS(fs *Monofs) (fuse.Server, error) {
+	// don't need to lock it here, because it's not used yet
+	fs.nextInode = fuseops.RootInodeID + 1
+	rootInode, err := fs.GetInode(fuseops.RootInodeID-1, "", true)
 	if err != nil {
 		if !errors.Is(err, fsdb.ErrNoSuchInode) {
 			return nil, fmt.Errorf("failed to get root inode: %v", err)
 		}
 		// Create the root directory.
 		t := fs.Clock.Now()
-		rootInode := fs.NextInode()
-		dbRoot := fsdb.NewInode(uint64(rootInode), fuseops.RootInodeID, "", fsdb.InodeAttributes{
+		rootInode = fsdb.NewInode(fuseops.RootInodeID, 0, "", fsdb.InodeAttributes{
 			Hash: "",
 			InodeAttributes: fuseops.InodeAttributes{
 				Size:   4096,
@@ -102,14 +44,18 @@ func NewMonoFS(config *config.Config, logger *zap.SugaredLogger) (fuse.Server, e
 				Gid:    fs.gid,
 			},
 		})
-		if err := fs.AddInode(dbRoot, true); err != nil {
+		if err = fs.AddInode(rootInode, true); err != nil {
 			return nil, err
 		}
 	}
+	if err = fs.lastInodeEngine.Init(); err != nil {
+		return nil, err
+	}
 	fs.GetLastInode()
-	fs.lock.RLock()
-	fs.log.Debugf("Last inode: %v", fs.nextInode)
-	fs.lock.RUnlock()
+	fs.lockInode.RLock()
+	fs.log.Debugf("Last inode: %v root Inode: %d snapshot: %s", fs.nextInode, rootInode.ID(), fs.CurrentSnapshot)
+	fs.lockInode.RUnlock()
+	// check if snaphosts have errors
 	return fuseutil.NewFileSystemServer(fs), nil
 }
 
@@ -138,26 +84,37 @@ func (fs *Monofs) StatFS(
 
 // NextInode returns the next available inode ID.
 func (fs *Monofs) NextInode() fuseops.InodeID {
-	fs.lock.Lock()
+	fs.lockInode.Lock()
 	fs.nextInode++
 	fs.lastInodeEngine.StoreLastInode(fs.nextInode)
-	fs.lock.Unlock()
+	fs.lockInode.Unlock()
 	return fs.nextInode
 }
 
 // GetLastInode get last inode from lastinode engine
 func (fs *Monofs) GetLastInode() {
-	fs.lock.Lock()
-	defer fs.lock.Unlock()
+	fs.lockInode.RLock()
+	defer fs.lockInode.RUnlock()
 	fs.nextInode = fs.lastInodeEngine.GetLastInode()
 }
 
-// NextHandle returns the next available handle ID.
-func (fs *Monofs) NextHandle() fuseops.HandleID {
-	fs.lock.Lock()
-	fs.nextHandle++
-	fs.lock.Unlock()
-	return fs.nextHandle
+// FindNextDirHandle find unused dir handle
+func (fs *Monofs) FindNextDirHandle() fuseops.HandleID {
+	fs.lockHandle.Lock()
+	defer fs.lockHandle.Unlock()
+	handle := fs.nextHandle
+	for _, ok := fs.fileHandles[handle]; ok; _, ok = fs.fileHandles[handle] {
+		handle++
+	}
+	fs.nextHandle = handle + 1
+	return handle
+}
+
+// DeleteDirHandle delete dir handle
+func (fs *Monofs) DeleteDirHandle(handle fuseops.HandleID) {
+	fs.lockHandle.Lock()
+	defer fs.lockHandle.Unlock()
+	delete(fs.dirHandles, handle)
 }
 
 // NewInode Create a new inode.

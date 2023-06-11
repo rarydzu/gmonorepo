@@ -8,11 +8,9 @@ import (
 	"syscall"
 
 	"github.com/jacobsa/fuse/fuseops"
-	"github.com/nutsdb/nutsdb"
 	"github.com/rarydzu/gmonorepo/utils"
+	"github.com/syndtr/goleveldb/leveldb"
 )
-
-const bucket = "inodes"
 
 type LastInodeEngine struct {
 	Path       string
@@ -23,12 +21,12 @@ type LastInodeEngine struct {
 	shutdown     chan bool
 	lastFile     *os.File
 	rlock        sync.RWMutex
-	db           *nutsdb.DB
+	db           *leveldb.DB
 }
 
-func New(path string, db *nutsdb.DB) *LastInodeEngine {
+func New(path string, db *leveldb.DB) *LastInodeEngine {
 	return &LastInodeEngine{
-		LastInode: 0,
+		LastInode: fuseops.InodeID(utils.MaxUint40()),
 		Path:      path,
 		shutdown:  make(chan bool),
 		db:        db,
@@ -84,31 +82,13 @@ func (l *LastInodeEngine) addLastInode(inode fuseops.InodeID) error {
 }
 
 func (l *LastInodeEngine) getInodeFromDb() error {
-	maxInode := uint64(0)
-	tx, err := l.db.Begin(false)
-	if err != nil {
-		return err
-	}
-	iterator := nutsdb.NewIterator(tx, bucket, nutsdb.IteratorOptions{Reverse: false})
-	ok, err := iterator.SetNext()
-	if err != nil {
-		if nutsdb.IsBucketNotFound(err) {
-			return nil
-		}
-		return err
-	}
-	for ok {
-		inode := utils.BytesToUint64(iterator.Entry().Value)
+	maxInode := uint64(utils.MaxUint40())
+	iter := l.db.NewIterator(nil, nil)
+	for iter.Next() {
+		inode := utils.BytesToUint64(iter.Value())
 		if inode > maxInode {
 			maxInode = inode
 		}
-		ok, err = iterator.SetNext()
-		if err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
 	}
 	l.rlock.Lock()
 	l.LastInode = fuseops.InodeID(maxInode)

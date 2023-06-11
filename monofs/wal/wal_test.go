@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path"
 	"testing"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/rarydzu/gmonorepo/monofs/monocache"
 	"github.com/rarydzu/gmonorepo/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 const (
@@ -35,7 +36,7 @@ func generateRandom() []byte {
 }
 
 func TestWalReply(t *testing.T) {
-	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true))
+	db, err := leveldb.OpenFile(path.Join(t.TempDir(), "testWalReply"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestWalReply(t *testing.T) {
 }
 
 func TestWAL(t *testing.T) {
-	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true))
+	db, err := leveldb.OpenFile(path.Join(t.TempDir(), "walTest"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,21 +104,12 @@ func TestWAL(t *testing.T) {
 		t.Fatal(err)
 	}
 	numberOfKeys := 0
-	err = db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			k := item.Key()
-			if len(k) != 0 {
-				numberOfKeys++
-			}
-		}
-		return nil
-	})
-	if err != nil {
+	iterator := db.NewIterator(nil, nil)
+	for iterator.Next() {
+		numberOfKeys++
+	}
+	iterator.Release()
+	if err := iterator.Error(); err != nil {
 		t.Fatal(err)
 	}
 	assert.Equal(t, expectedDbEntries, numberOfKeys)
@@ -135,7 +127,7 @@ func TestWALReplyLong(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Seek(0, 0)
-	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true))
+	db, err := leveldb.OpenFile(path.Join(t.TempDir(), "testWalReplyLong"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

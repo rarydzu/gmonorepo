@@ -76,7 +76,7 @@ func (p *Processor) processStopSignal(ctx context.Context, cancel context.Cancel
 	defer p.wg.Done()
 	<-ctx.Done()
 	tF := time.AfterFunc(p.ForceShutdownTimeout, func() {
-		p.log.Warnf("timeout %d ms has been elapsed, force exit", p.ForceShutdownTimeout.Milliseconds())
+		p.log.Warnf("timeout %d ms has been elapsed, force exit, umount fs manually", p.ForceShutdownTimeout.Milliseconds())
 		os.Exit(0)
 	})
 	defer tF.Stop()

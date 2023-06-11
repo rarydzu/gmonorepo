@@ -2,6 +2,9 @@ syntax="proto3";
 
 package proto;
 
+import public "google/protobuf/empty.proto";
+import public "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/rarydzu/gmonorepo/proto;proto";
 
 
@@ -51,4 +54,54 @@ service MonofsProxy {
    // Delete
    // StartTxn
    // CommitTxn
+}
+
+message GetSnapshotRequest {
+   uint64 creation_id = 1;
+   string auth = 2;
+}
+
+message GetSnapshotResponse {
+   string id = 1;
+   string fs = 2;
+   string name = 3;
+   google.protobuf.Timestamp created = 4;
+   string status = 5;
+}
+
+message CreateSnapshotRequest {
+   string fs = 1;
+   string name = 3;
+   string auth = 4;
+}
+
+message CreateSnapshotResponse {
+   uint64 creation_id = 1;
+}
+
+message ListSnapshotsResponse {
+   string id = 1;
+   string fs = 2;
+   string name = 3;
+   google.protobuf.Timestamp created = 4;
+   string status = 5;
+}
+
+message DeleteSnapshotRequest {
+   string fs = 1;
+   string id = 2;
+   string auth = 3;
+}
+
+message DeleteSnapshotResponse {
+   string id = 1;
+   string fs = 2;
+   string status = 3;
+}
+
+service MonofsManager {
+   rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse) {}
+   rpc ListSnapshots(google.protobuf.Empty) returns (stream ListSnapshotsResponse) {}
+   rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse) {}
+   rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse) {}
 }

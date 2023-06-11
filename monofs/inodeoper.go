@@ -2,11 +2,14 @@ package monofs
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/rarydzu/gmonorepo/monofs/fsdb"
+	"github.com/rarydzu/gmonorepo/utils"
 )
 
 // MkNode - Create a new inode.
@@ -14,8 +17,15 @@ func (fs *Monofs) MkNode(
 	ctx context.Context,
 	op *fuseops.MkNodeOp) error {
 	t := fs.Clock.Now()
+	fs.fsHashLock.Lock(op.Parent)
+	defer fs.fsHashLock.Unlock(op.Parent)
+	// add to sha256 name of file current time and some random string
+	sha256 := sha256.New()
+	sha256.Write([]byte(op.Name))
+	sha256.Write([]byte(t.String()))
+	sha256.Write([]byte(utils.RandString(32)))
 	inode := fs.NewInode(op.Parent, op.Name, fsdb.InodeAttributes{
-		Hash: "", // TODO FIXME
+		Hash: fmt.Sprintf("%x.%s", sha256.Sum(nil), fs.CurrentSnapshot),
 		InodeAttributes: fuseops.InodeAttributes{
 			Size:  4096,
 			Nlink: 1,
@@ -42,6 +52,8 @@ func (fs *Monofs) MkNode(
 func (fs *Monofs) LookUpInode(
 	ctx context.Context,
 	op *fuseops.LookUpInodeOp) error {
+	fs.fsHashLock.RLock(op.Parent)
+	defer fs.fsHashLock.RUnlock(op.Parent)
 	// Look up the requested inode.
 	inode, err := fs.GetInode(op.Parent, op.Name, true)
 	if err != nil {
@@ -64,12 +76,13 @@ func (fs *Monofs) GetInodeAttributes(
 	attrs, err := fs.GetInodeAttrs(op.Inode)
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
+			fs.log.Debugf("GetInodeAttributes NOT FOUND(%d): %v", op.Inode, err)
 			return fuse.ENOENT
 		}
 		return fuse.EIO
 	}
-	op.Attributes = attrs
 	fs.patchTime(&attrs)
+	op.Attributes = attrs
 	return nil
 }
 
@@ -78,7 +91,7 @@ func (fs *Monofs) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAt
 	attrs, err := fs.GetInodeAttrs(op.Inode)
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
-			fs.log.Debugf("SetInodeAttributes(%d): %v", op.Inode, err)
+			op.AttributesExpiration = fs.Clock.Now()
 			return nil
 		}
 		fs.log.Errorf("SetInodeAttributes(%d): %v", op.Inode, err)
@@ -105,6 +118,7 @@ func (fs *Monofs) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAt
 	if err := fs.UpdateInodeAttrs(op.Inode, attrs); err != nil {
 		return fuse.EIO
 	}
+	op.Attributes = attrs
 	return nil
 }
 
@@ -112,6 +126,15 @@ func (fs *Monofs) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAt
 func (fs *Monofs) ForgetInode(
 	ctx context.Context,
 	op *fuseops.ForgetInodeOp) error {
-	//TODO integrate with last inode
+	// TODO FIX THIS and check if op.N actually == inode access count
+	if op.N > 0 {
+		if err := fs.DeleteInodeAttrs(op.Inode); err != nil {
+			if err != fsdb.ErrNoSuchInode {
+				return fuse.ENOENT
+			}
+			fs.log.Errorf("ForgetInode(%d): %v", op.Inode, err)
+			return fuse.EIO
+		}
+	}
 	return nil
 }

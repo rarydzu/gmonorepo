@@ -26,4 +26,6 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	//CacheSize cache size
 	CacheSize int
+	//ManagerPort manager port
+	ManagerPort string
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"runtime/debug"
 	"time"
 
 	"github.com/jacobsa/fuse"
@@ -19,6 +20,27 @@ var fStatServerAddress = flag.String("statAddress", "", "Address of stat backend
 var fCertDir = flag.String("cert_dir", "", "Certificate directory")
 var fDev = flag.Bool("dev", false, "Run in development mode")
 var fFuseDebug = flag.Bool("fuse_debug", false, "Run in fuse debug mode")
+var fManagerPort = flag.String("manager_port", ":50052", "Manager port")
+var fCacheSize = flag.Int("cache_size", 10000, "Cache size")
+var fShutdownTimeout = flag.Duration("shutdown_timeout", 60*time.Second, "Shutdown timeout")
+var fFilesystemName = flag.String("filesystem_name", "monofs#head", "Filesystem name")
+
+func version() string {
+	var (
+		rev = "unknown"
+	)
+	buildInfo, ok := debug.ReadBuildInfo()
+	if !ok {
+		return rev
+	}
+	for _, v := range buildInfo.Settings {
+		if v.Key == "vcs.revision" {
+			rev = v.Value
+			break
+		}
+	}
+	return rev
+}
 
 func main() {
 	flag.Parse()
@@ -42,7 +64,7 @@ func main() {
 	fuseCfg := &fuse.MountConfig{
 		ReadOnly:    *fReadOnly,
 		ErrorLogger: zap.NewStdLog(sugarlog.Desugar()),
-		FSName:      "monofs",
+		FSName:      *fFilesystemName,
 	}
 
 	if *fFuseDebug {
@@ -56,14 +78,15 @@ func main() {
 
 	worker, err := worker.New(&config.Config{
 		Path:            *fInodePath,
-		FilesystemName:  "monofs", //TODO change me for different filesystems or read values from file // this should be in form project#branch or project#tag
+		FilesystemName:  *fFilesystemName,
 		StatClient:      monostat.New(conn),
 		FuseCfg:         fuseCfg,
 		Mountpoint:      *fMountPoint,
 		DebugMode:       *fDev,
 		ReadOnly:        *fReadOnly,
-		ShutdownTimeout: 60 * time.Second,
-		CacheSize:       10000,
+		ShutdownTimeout: *fShutdownTimeout,
+		CacheSize:       *fCacheSize,
+		ManagerPort:     *fManagerPort,
 	}, sugarlog)
 	if err != nil {
 		log.Fatalf("makeFS: %v", err)
@@ -71,5 +94,6 @@ func main() {
 	if err := worker.Start(); err != nil {
 		log.Fatalf("Start: %v", err)
 	}
+	sugarlog.Infof("Started monofs version %s", version())
 	worker.Wait()
 }

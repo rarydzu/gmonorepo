@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	badger "github.com/dgraph-io/badger/v3"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/rarydzu/gmonorepo/monofs/config"
 	"github.com/rarydzu/gmonorepo/monofs/monocache"
@@ -50,14 +49,11 @@ func TestCacheStore(t *testing.T) {
 	}
 	// in cache not in db
 	for i := 0; i < 10; i++ {
-		if _, err := db.iCache.Get(uint64(i)); err != nil {
+		if _, err := db.aCache.Get(uint64(i)); err != nil {
 			t.Errorf("item not in cache: %d", i)
 		}
 		// get item from badger
-		err := db.astore.View(func(txn *badger.Txn) error {
-			_, err := txn.Get(utils.Uint64ToBytes(uint64(i)))
-			return err
-		})
+		_, err := db.astore.Get(utils.Uint64ToBytes(uint64(i)), nil)
 		if err == nil {
 			t.Errorf("item %d in db", i)
 		}
@@ -85,24 +81,20 @@ func TestCacheStore(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	notFoundInodes := 0
 	for i := 0; i < maxInodes; i++ {
-		if _, err := db.iCache.Get(uint64(i)); err != nil {
+		if _, err := db.aCache.Get(uint64(i)); err != nil {
 			if err != monocache.ErrKeyNotFound {
 				t.Errorf("failed item %d: %v", i, err)
 			} else {
 				notFoundInodes++
 			}
 		}
-		// get item from badger
-		err := db.astore.View(func(txn *badger.Txn) error {
-			_, err := txn.Get(utils.Uint64ToBytes(uint64(i)))
-			return err
-		})
+		_, err := db.astore.Get(utils.Uint64ToBytes(uint64(i)), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	time.Sleep(1 * time.Second)
-	if db.iCache.Len()+notFoundInodes != maxInodes {
-		t.Errorf("cache size: %d, not found inodes: %d", db.iCache.Len(), notFoundInodes)
+	if db.aCache.Len()+notFoundInodes != maxInodes {
+		t.Errorf("cache size: %d, not found inodes: %d", db.aCache.Len(), notFoundInodes)
 	}
 }

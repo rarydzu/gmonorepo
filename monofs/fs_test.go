@@ -90,13 +90,16 @@ func (t *MonoFSTest) SetUp(ti *TestInfo) {
 	logger, err := zap.NewProduction()
 	AssertEq(nil, err)
 	sugarlog := logger.Sugar()
-	t.Server, err = NewMonoFS(&config.Config{
+
+	fs, err := NewMonoFS(&config.Config{
 		Path:           t.inodePath,
 		FilesystemName: "test",
 		StatClient:     monostat.New(conn),
 	},
 		sugarlog,
 	)
+	AssertEq(nil, err)
+	t.Server, err = NewMonoFuseFS(fs)
 	AssertEq(nil, err)
 	t.SampleTest.SetUp(ti)
 }
@@ -183,7 +186,7 @@ func CreateAndCheckFileTree(rootPath, dir string, round int) error {
 	return os.RemoveAll(rootPath + dir)
 }
 
-func (t MonoFSTest) RewriteFiles() {
+func (t *MonoFSTest) RewriteFiles() {
 	testDir := fmt.Sprintf("/%s", CreateRandomString(64))
 	for i := 0; i < 20; i++ {
 		err := CreateAndCheckFileTree(t.Dir, testDir, i)
@@ -195,7 +198,7 @@ func (t MonoFSTest) RewriteFiles() {
 	}
 }
 
-func (t MonoFSTest) CreateRemoveLinks() {
+func (t *MonoFSTest) CreateRemoveLinks() {
 	err := os.Mkdir(t.Dir+"/foo", 0755)
 	AssertEq(nil, err)
 	err = os.Mkdir(t.Dir+"/bar", 0755)

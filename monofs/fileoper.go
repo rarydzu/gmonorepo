@@ -2,20 +2,27 @@ package monofs
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
+	"syscall"
 
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/jacobsa/fuse/fuseutil"
 	monofile "github.com/rarydzu/gmonorepo/monofs/file"
 	"github.com/rarydzu/gmonorepo/monofs/fsdb"
+	"github.com/rarydzu/gmonorepo/utils"
 )
 
 // CreateFile Create a new file.
 func (fs *Monofs) CreateFile(
 	ctx context.Context,
 	op *fuseops.CreateFileOp) error {
+	fs.log.Debugf("CreateFile(%d:%s)", op.Parent, op.Name)
 	// Create a new inode.
+	fs.fsHashLock.Lock(op.Parent)
+	defer fs.fsHashLock.Unlock(op.Parent)
 	i, err := fs.GetInode(op.Parent, op.Name, true)
 	if err == nil {
 		op.Entry.Child = i.ID()
@@ -23,9 +30,14 @@ func (fs *Monofs) CreateFile(
 		return nil
 	}
 	t := fs.Clock.Now()
+	// add to sha256 name of file current time and some random string
+	sha256 := sha256.New()
+	sha256.Write([]byte(op.Name))
+	sha256.Write([]byte(t.String()))
+	sha256.Write([]byte(utils.RandString(32)))
 	inode := fs.NewInode(op.Parent, op.Name,
 		fsdb.InodeAttributes{
-			Hash: "", // TODO FIXME
+			Hash: fmt.Sprintf("%x.%s", sha256.Sum(nil), fs.CurrentSnapshot),
 			InodeAttributes: fuseops.InodeAttributes{
 				Size:  0,
 				Nlink: 1,
@@ -43,7 +55,7 @@ func (fs *Monofs) CreateFile(
 		fs.log.Errorf("CreateFile(%d:%s): %v", op.Parent, op.Name, err)
 		return fuse.EIO
 	}
-	fs.fileHandles[op.Handle] = monofile.New(inode.ID())
+	fs.fileHandles[op.Handle] = monofile.New(fs.Name, inode.ID(), inode.Attrs.Hash)
 	op.Entry.Child = inode.ID()
 	op.Entry.Attributes = inode.Attrs.InodeAttributes
 	return nil
@@ -53,7 +65,10 @@ func (fs *Monofs) CreateFile(
 func (fs *Monofs) CreateLink(
 	ctx context.Context,
 	op *fuseops.CreateLinkOp) error {
-	attr, err := fs.GetInodeAttrs(op.Target)
+	fs.log.Debugf("CreateLink(%d:%s)", op.Parent, op.Name)
+	fs.fsHashLock.Lock(op.Parent)
+	defer fs.fsHashLock.Unlock(op.Parent)
+	iattr, err := fs.metadb.GetFsdbInodeAttributes(uint64(op.Target))
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
 			return fuse.ENOENT
@@ -63,8 +78,9 @@ func (fs *Monofs) CreateLink(
 	}
 	inode := fsdb.NewInode(uint64(op.Target), uint64(op.Parent), op.Name,
 		fsdb.InodeAttributes{
-			Hash:            "", // TODO FIXME
-			InodeAttributes: attr,
+			Hash:            iattr.Hash,
+			ParentID:        iattr.ParentID,
+			InodeAttributes: iattr.InodeAttributes,
 		})
 	inode.Attrs.Nlink++
 	if err = fs.AddInode(inode, true); err != nil {
@@ -80,6 +96,9 @@ func (fs *Monofs) CreateLink(
 func (fs *Monofs) CreateSymlink(
 	ctx context.Context,
 	op *fuseops.CreateSymlinkOp) error {
+	fs.log.Debugf("CreateSymlink(%s:%s)", op.Parent, op.Name)
+	fs.fsHashLock.Lock(op.Parent)
+	defer fs.fsHashLock.Unlock(op.Parent)
 	t := fs.Clock.Now()
 	inode := fs.NewInode(op.Parent, op.Name,
 		fsdb.InodeAttributes{
@@ -109,6 +128,7 @@ func (fs *Monofs) CreateSymlink(
 func (fs *Monofs) ReadSymlink(
 	ctx context.Context,
 	op *fuseops.ReadSymlinkOp) error {
+	fs.log.Debugf("ReadSymlink(%d:%s)", op.Inode, op.Target)
 	attr, err := fs.metadb.GetFsdbInodeAttributes(uint64(op.Inode))
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
@@ -128,9 +148,12 @@ func (fs *Monofs) ReadSymlink(
 func (fs *Monofs) Rename(
 	ctx context.Context,
 	op *fuseops.RenameOp) error {
+	fs.log.Debugf("Rename(%d:%s -> %d:%s)", op.OldParent, op.OldName, op.NewParent, op.NewName)
 	// Look up the source inode.
+	fs.fsHashLock.Lock(op.OldParent)
 	inode, err := fs.GetInode(op.OldParent, op.OldName, true)
 	if err != nil {
+		fs.fsHashLock.Unlock(op.OldParent)
 		if err == fsdb.ErrNoSuchInode {
 			return fuse.ENOENT
 		}
@@ -139,11 +162,14 @@ func (fs *Monofs) Rename(
 	}
 	// Remove it from the source directory.
 	err = fs.DeleteInode(inode, false)
+	fs.fsHashLock.Unlock(op.OldParent)
 	if err != nil {
 		fs.log.Errorf("Rename(DeleteInode)(%d:%s): %v", inode.ParentID, inode.Name, err)
 		return fuse.EIO
 	}
 
+	fs.fsHashLock.Lock(op.NewParent)
+	defer fs.fsHashLock.Lock(op.NewParent)
 	// Add it to the target directory.
 	inode.SetParent(op.NewParent)
 	inode.SetName(op.NewName)
@@ -162,6 +188,8 @@ func (fs *Monofs) Rename(
 func (fs *Monofs) Unlink(
 	ctx context.Context,
 	op *fuseops.UnlinkOp) error {
+	fs.fsHashLock.Lock(op.Parent)
+	defer fs.fsHashLock.Unlock(op.Parent)
 	// Look up the source inode.
 	inode, err := fs.GetInode(op.Parent, op.Name, true)
 	if err != nil {
@@ -171,10 +199,9 @@ func (fs *Monofs) Unlink(
 		fs.log.Errorf("Unlink(GetInode)(%d:%s): %v", op.Parent, op.Name, err)
 		return fuse.EIO
 	}
-	err = fs.DeleteInode(inode, false)
-	if err != nil {
-		fs.log.Errorf("Unlink(DeleteInode)(%d:%s): %v", inode.ParentID, inode.Name, err)
-		return fuse.EIO
+	// check if it's directory
+	if inode.Attrs.Mode&os.ModeDir == os.ModeDir {
+		return syscall.EISDIR
 	}
 	if inode.Attrs.Mode&os.ModeSymlink != os.ModeSymlink {
 		if inode.Attrs.Nlink > 1 {
@@ -184,8 +211,8 @@ func (fs *Monofs) Unlink(
 				return fuse.EIO
 			}
 		} else {
-			if err = fs.DeleteInodeAttrs(inode.ID()); err != nil {
-				fs.log.Errorf("Unlink(DeleteInodeAttrs)(%d): %v", inode.ID(), err)
+			if err := fs.DeleteInode(inode, false); err != nil {
+				fs.log.Errorf("Unlink(DeleteInode)(%d:%s): %v", inode.ParentID, inode.Name, err)
 				return fuse.EIO
 			}
 		}
@@ -197,7 +224,8 @@ func (fs *Monofs) Unlink(
 func (fs *Monofs) OpenFile(
 	ctx context.Context,
 	op *fuseops.OpenFileOp) error {
-	_, err := fs.GetInodeAttrs(op.Inode)
+	fs.log.Debugf("OpenFile(%d)", op.Inode)
+	a, err := fs.metadb.GetFsdbInodeAttributes(uint64(op.Inode))
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {
 			return fuse.ENOENT
@@ -205,7 +233,12 @@ func (fs *Monofs) OpenFile(
 		fs.log.Errorf("OpenFile(GetInodeAttrs)(%d): %v", op.Inode, err)
 		return fuse.EIO
 	}
-	fs.fileHandles[op.Handle] = monofile.New(op.Inode)
+	// check if it's file and have emtpty hash - error
+	if a.GetHash() == "" && fsdb.InodeDirentType(a.InodeAttributes.Mode) == fuseutil.DT_File {
+		fs.log.Errorf("OpenFile(GetInodeAttrs)(%d): hash is empty", op.Inode)
+		return fuse.EIO
+	}
+	fs.fileHandles[op.Handle] = monofile.New(fs.Name, op.Inode, a.GetHash())
 	return nil
 }
 

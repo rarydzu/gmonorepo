@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/syndtr/goleveldb/leveldb"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -28,7 +28,7 @@ type WAL struct {
 	// fileCounter	 is counter of WAL files
 	fileCounter int
 	// db is database for WAL
-	db *badger.DB
+	db *leveldb.DB
 	sync.RWMutex
 	// encoder is encoder for WAL
 	encoder *Encoder
@@ -37,7 +37,7 @@ type WAL struct {
 }
 
 // New creates or opens new WAL object
-func New(path string, db *badger.DB) (*WAL, error) {
+func New(path string, db *leveldb.DB) (*WAL, error) {
 	w := &WAL{
 		path:        path,
 		fileCounter: 0,
@@ -149,8 +149,8 @@ func (w *WAL) internalDBDump(fileName string, output chan string) error {
 	}
 	defer f.Close()
 	decoder := NewDecoder(f)
-	wb := w.db.NewWriteBatch()
-	defer wb.Cancel()
+
+	wb := new(leveldb.Batch)
 	for {
 		var entry Entry
 		if err := decoder.Decode(&entry); err != nil {
@@ -160,19 +160,15 @@ func (w *WAL) internalDBDump(fileName string, output chan string) error {
 			return err
 		}
 		if entry.Tombstoned {
-			if err := wb.Delete(entry.Key); err != nil {
-				return err
-			}
+			wb.Delete(entry.Key)
 			output <- string(entry.Key)
 		} else {
-			if err := wb.Set(entry.Key, entry.Value); err != nil {
-				return err
-			}
+			wb.Put(entry.Key, entry.Value)
 			output <- string(entry.Key)
 		}
 	}
 	f.Close()
-	err = wb.Flush()
+	err = w.db.Write(wb, nil)
 	if err != nil {
 		return err
 	}

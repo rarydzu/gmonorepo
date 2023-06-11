@@ -14,7 +14,8 @@ import (
 func (fs *Monofs) MkDir(
 	ctx context.Context,
 	op *fuseops.MkDirOp) error {
-
+	fs.fsHashLock.Lock(op.Parent)
+	defer fs.fsHashLock.Unlock(op.Parent)
 	_, err := fs.GetInode(op.Parent, op.Name, false)
 	if err == nil {
 		fs.log.Infof("MkDir(%d:%s): already exists", op.Parent, op.Name)
@@ -40,7 +41,6 @@ func (fs *Monofs) MkDir(
 	if err = fs.AddInode(inode, true); err != nil {
 		return err
 	}
-	fs.log.Debugf("MkDir(%d:%d:%s): %v", inode.InodeID, op.Parent, op.Name, err)
 	// Report the inode's attributes.
 	op.Entry.Child = inode.ID()
 	op.Entry.Attributes = inode.Attrs.InodeAttributes
@@ -51,6 +51,8 @@ func (fs *Monofs) MkDir(
 func (fs *Monofs) OpenDir(
 	ctx context.Context,
 	op *fuseops.OpenDirOp) error {
+	fs.fsHashLock.RLock(op.Inode)
+	defer fs.fsHashLock.RUnlock(op.Inode)
 	// Open the directory.
 	attr, err := fs.GetInodeAttrs(op.Inode)
 	if err != nil {
@@ -65,6 +67,7 @@ func (fs *Monofs) OpenDir(
 	if fsdb.InodeDirentType(attr.Mode) != fuseutil.DT_Directory {
 		return fuse.ENOTDIR
 	}
+	op.Handle = fs.FindNextDirHandle()
 	fs.dirHandles[op.Handle] = monodir.New(fs.metadb, op.Inode)
 	return nil
 }
@@ -73,11 +76,13 @@ func (fs *Monofs) OpenDir(
 func (fs *Monofs) ReadDir(
 	ctx context.Context,
 	op *fuseops.ReadDirOp) error {
+	var (
+		inodeEntries []*fsdb.Inode
+		err          error
+	)
+	fs.fsHashLock.RLock(op.Inode)
+	defer fs.fsHashLock.RUnlock(op.Inode)
 	// Look up the directory.
-	zeroStart := true
-	if op.Offset != 0 {
-		zeroStart = false
-	}
 	dir, ok := fs.dirHandles[op.Handle]
 	if !ok {
 		return fuse.ENOTDIR
@@ -86,16 +91,15 @@ func (fs *Monofs) ReadDir(
 		fs.log.Errorf("ReadDir(%d): wrong inode %d", op.Inode, dir.GetInodeID())
 		return fuse.EINVAL
 	}
-	// Read the directory entries.
-	inodeEntries, err := dir.Entries(op.Offset, len(op.Dst))
+	inodeEntries, err = dir.GetDentries(op.Offset, len(op.Dst))
 	if err != nil {
 		fs.log.Errorf("ReadDir(%d): %v", op.Inode, err)
 		return fuse.EIO
 	}
-	for _, inode := range inodeEntries {
+	for x, inode := range inodeEntries {
 		// Report the entry.
 		dirent := fuseutil.Dirent{
-			Offset: op.Offset,
+			Offset: op.Offset + fuseops.DirOffset(x+1), // TODO FIXME
 			Inode:  inode.ID(),
 			Name:   inode.Name,
 			Type:   fsdb.InodeDirentType(inode.Attrs.Mode),
@@ -106,26 +110,22 @@ func (fs *Monofs) ReadDir(
 		)
 		// Stop if we've filled the buffer.
 		if op.BytesRead == len(op.Dst) {
-			//if we start listing we need to consider the first two generated entries "." and ".."
+			op.Offset = fuseops.DirOffset(x + 1)
 			offset := int(op.Offset)
-			if zeroStart {
-				if op.Offset > 2 {
-					offset = -2
-				} else {
-					offset = 0
-				}
-			}
 			dir.UpdateOffset(offset)
-			break
+			dir.UpdateName(inode.Name)
+			return nil
 		}
-		// Advance the offset.
-		op.Offset++
 	}
+	// Advance the offset.
+	op.Offset = fuseops.DirOffset(len(inodeEntries))
 	return nil
 }
 
 // RmDir removes a directory.
 func (fs *Monofs) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
+	fs.fsHashLock.Lock(op.Parent)
+	defer fs.fsHashLock.Unlock(op.Parent)
 	inode, err := fs.GetInode(op.Parent, op.Name, true)
 	if err != nil {
 		if err != fsdb.ErrNoSuchInode {
@@ -137,7 +137,6 @@ func (fs *Monofs) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	if fsdb.InodeDirentType(inode.Attrs.Mode) != fuseutil.DT_Directory {
 		return fuse.ENOTDIR
 	}
-	fs.log.Debugf("RmDir(%d:%d:%s)", inode.InodeID, op.Parent, op.Name)
 	children, err := fs.metadb.GetChildrenCount(inode.InodeID)
 	if err != nil {
 		if err != fsdb.ErrNoSuchInode {
@@ -161,9 +160,6 @@ func (fs *Monofs) ReleaseDirHandle(
 	ctx context.Context,
 	op *fuseops.ReleaseDirHandleOp) error {
 	// Release the directory.
-	_, ok := fs.dirHandles[op.Handle]
-	if ok {
-		delete(fs.dirHandles, op.Handle)
-	}
+	fs.DeleteDirHandle(op.Handle)
 	return nil
 }

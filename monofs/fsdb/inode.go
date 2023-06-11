@@ -16,9 +16,9 @@ type InodeAttributes struct {
 
 func DbInodeKey(parent uint64, name string) []byte {
 	if len(name) == 0 {
-		return []byte(fmt.Sprintf("#%d:", parent))
+		return []byte(fmt.Sprintf("%d:", parent))
 	}
-	return []byte(fmt.Sprintf("#%d:%s", parent, name))
+	return []byte(fmt.Sprintf("%d:%s", parent, name))
 }
 
 type Inode struct {
@@ -87,4 +87,8 @@ func (ia *InodeAttributes) Marshall() ([]byte, error) {
 
 func (ia *InodeAttributes) Unmarshall(data []byte) error {
 	return json.Unmarshal(data, ia)
+}
+
+func (ia *InodeAttributes) GetHash() string {
+	return ia.Hash
 }

@@ -11,6 +11,7 @@ require (
 	github.com/nutsdb/nutsdb v0.12.0
 	github.com/shirou/gopsutil/v3 v3.23.4
 	github.com/stretchr/testify v1.8.2
+	github.com/syndtr/goleveldb v1.0.0
 	github.com/ztrue/tracerr v0.3.0
 	go.uber.org/zap v1.24.0
 	golang.org/x/sync v0.1.0

@@ -27,6 +27,7 @@ type Worker struct {
 	fsServer  fuse.Server
 	fusemfs   *fuse.MountedFileSystem
 	cfg       *config.Config
+	Monofs    *monofs.Monofs
 }
 
 func New(cfg *config.Config, log *zap.SugaredLogger) (*Worker, error) {
@@ -41,8 +42,16 @@ func New(cfg *config.Config, log *zap.SugaredLogger) (*Worker, error) {
 	if err := copier.Copy(&w.cfg, cfg); err != nil {
 		return nil, err
 	}
-	server, err := monofs.NewMonoFS(w.cfg, w.log)
+	monoServer, err := monofs.NewMonoFS(w.cfg, w.log)
 	if err != nil {
+		return nil, err
+	}
+	w.Monofs = monoServer
+	server, err := monofs.NewMonoFuseFS(monoServer)
+	if err != nil {
+		return nil, err
+	}
+	if err := monoServer.PostInitStart(); err != nil {
 		return nil, err
 	}
 	w.fsServer = server
@@ -56,6 +65,9 @@ func (w *Worker) Start() error {
 	w.active = true
 	w.Processor = processor.New(w.cfg.ShutdownTimeout, w.log)
 	if err := w.Processor.Register(processor.Shutdown, "filesystem", w.Umount); err != nil {
+		return err
+	}
+	if err := w.Processor.Register(processor.Shutdown, "monofs", w.Monofs.Stop); err != nil {
 		return err
 	}
 	mfs, err := fuse.Mount(w.cfg.Mountpoint, w.fsServer, w.cfg.FuseCfg)
