@@ -133,8 +133,8 @@ func New(config *config.Config) (*Fsdb, error) {
 		return fsdb.Wal.AddEntry(entry)
 	})
 	fsdb.aCache.SetCacheFullCallback(func(output chan string) error {
-		// dump must include generation and cache so it can set item.processed
-		return w.Dump(output)
+		_, err := w.Dump(output, nil)
+		return err
 	})
 	return fsdb, nil
 }

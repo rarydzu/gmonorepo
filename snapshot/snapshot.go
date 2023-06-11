@@ -104,7 +104,10 @@ func (s *Snapshot) newSnapshot(name string) (string, error) {
 		return "", err
 	}
 	s.Name = name
-	//TODO SORT OUT WAL
+	walFileName, err := s.w.Dump(make(chan string), attrSnapshotDB)
+	if err != nil {
+		return "", err
+	}
 	defer inodeSnapshotDB.Close()
 	defer attrSnapshotDB.Close()
 	is := inodeSnapshot.NewIterator(nil, nil)
@@ -133,6 +136,9 @@ func (s *Snapshot) newSnapshot(name string) (string, error) {
 	}
 	err = s.db.Put([]byte(name), []byte(hash), nil)
 	if err != nil {
+		return "", err
+	}
+	if err := s.w.DBDump(walFileName, make(chan string), attrSnapshotDB); err != nil {
 		return "", err
 	}
 	s.Name = name

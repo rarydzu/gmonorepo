@@ -97,7 +97,7 @@ func TestWAL(t *testing.T) {
 		}
 	}
 	o := make(chan string, 1020)
-	if err := wal.Dump(o); err != nil {
+	if _, err := wal.Dump(o, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := wal.Wait(); err != nil {

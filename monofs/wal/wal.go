@@ -123,17 +123,22 @@ func (w *WAL) Close() error {
 }
 
 // Dump  dumps WAL to database and creates new WAL file
-func (w *WAL) Dump(output chan string) error {
+func (w *WAL) Dump(output chan string, snapshotDB *leveldb.DB) (string, error) {
 	w.Lock()
 	defer w.Unlock()
 	previousFileName := fmt.Sprintf("%s/%d.wal", w.path, w.fileCounter)
 	if err := w.CreateNewWALFile(); err != nil {
-		return err
+		return "", err
 	}
-	w.g.Go(func() error {
-		return w.internalDBDump(previousFileName, output)
-	})
-	return nil
+	if snapshotDB == nil {
+		w.g.Go(func() error {
+			if err := w.DBDump(previousFileName, output, nil); err != nil {
+				return err
+			}
+			return os.Remove(previousFileName)
+		})
+	}
+	return previousFileName, nil
 }
 
 // Wait waits for all WAL dumps to finish
@@ -141,8 +146,8 @@ func (w *WAL) Wait() error {
 	return w.g.Wait()
 }
 
-// internalDump dumps WAL to database
-func (w *WAL) internalDBDump(fileName string, output chan string) error {
+// BDump dumps WAL to database
+func (w *WAL) DBDump(fileName string, output chan string, db *leveldb.DB) error {
 	f, err := os.Open(fileName)
 	if err != nil {
 		return err
@@ -161,10 +166,14 @@ func (w *WAL) internalDBDump(fileName string, output chan string) error {
 		}
 		if entry.Tombstoned {
 			wb.Delete(entry.Key)
-			output <- string(entry.Key)
+			if db != nil {
+				output <- string(entry.Key)
+			}
 		} else {
 			wb.Put(entry.Key, entry.Value)
-			output <- string(entry.Key)
+			if db != nil {
+				output <- string(entry.Key)
+			}
 		}
 	}
 	f.Close()
@@ -172,7 +181,10 @@ func (w *WAL) internalDBDump(fileName string, output chan string) error {
 	if err != nil {
 		return err
 	}
-	return os.Remove(fileName)
+	if db != nil {
+		return db.Write(wb, nil)
+	}
+	return nil
 }
 
 // Reply reads content of WAL file and return list of entries
