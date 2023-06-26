@@ -19,7 +19,6 @@ import (
 func (fs *Monofs) CreateFile(
 	ctx context.Context,
 	op *fuseops.CreateFileOp) error {
-	fs.log.Debugf("CreateFile(%d:%s)", op.Parent, op.Name)
 	// Create a new inode.
 	fs.fsHashLock.Lock(op.Parent)
 	defer fs.fsHashLock.Unlock(op.Parent)

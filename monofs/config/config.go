@@ -28,4 +28,6 @@ type Config struct {
 	CacheSize int
 	//ManagerPort manager port
 	ManagerPort string
+	//BloomFilterSize bloom filter size
+	BloomFilterSize int
 }

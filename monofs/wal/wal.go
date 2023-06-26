@@ -80,7 +80,7 @@ func (w *WAL) OpenLastWALFile() error {
 	fileName := fmt.Sprintf("%s/%d.wal", w.path, w.fileCounter)
 	f, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0640)
 	if err != nil {
-		return err
+		return fmt.Errorf("OpenLastWALFile: %v", err)
 	}
 	w.file = f
 	w.encoder = NewEncoder(f)
@@ -89,12 +89,14 @@ func (w *WAL) OpenLastWALFile() error {
 
 // CreateNewWALFile creates new WAL file
 func (w *WAL) CreateNewWALFile() error {
+	fmt.Println("CreateNewWALFile")
+	cnt := w.fileCounter
 	if w.file != nil {
 		w.file.Close()
 		w.file = nil
-		w.fileCounter++
+		cnt++
 	}
-	f, err := os.Create(fmt.Sprintf("%s/%d.wal", w.path, w.fileCounter))
+	f, err := os.Create(fmt.Sprintf("%s/%d.wal", w.path, cnt))
 	if err != nil {
 		return err
 	}
@@ -102,6 +104,18 @@ func (w *WAL) CreateNewWALFile() error {
 	w.encoder = NewEncoder(f)
 	w.fileCounter++
 	return nil
+}
+
+// CheckFileSize return size of current WAL file
+func (w *WAL) CheckFileSize() (int64, error) {
+	if w.file != nil {
+		fileInfo, err := w.file.Stat()
+		if err != nil {
+			return 0, err
+		}
+		return fileInfo.Size(), nil
+	}
+	return 0, fmt.Errorf("WAL file is not opened")
 }
 
 // AddEntry adds entry to WAL
@@ -126,6 +140,13 @@ func (w *WAL) Close() error {
 func (w *WAL) Dump(output chan string, snapshotDB *leveldb.DB) (string, error) {
 	w.Lock()
 	defer w.Unlock()
+	size, err := w.CheckFileSize()
+	if err != nil {
+		return "", err
+	}
+	if size == 0 {
+		return "", nil
+	}
 	previousFileName := fmt.Sprintf("%s/%d.wal", w.path, w.fileCounter)
 	if err := w.CreateNewWALFile(); err != nil {
 		return "", err
@@ -137,6 +158,11 @@ func (w *WAL) Dump(output chan string, snapshotDB *leveldb.DB) (string, error) {
 			}
 			return os.Remove(previousFileName)
 		})
+		go func() {
+			if err := w.g.Wait(); err != nil {
+				fmt.Println(err) // TODO CHANGE ME
+			}
+		}()
 	}
 	return previousFileName, nil
 }

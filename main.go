@@ -76,6 +76,7 @@ func main() {
 		log.Fatalf("Stat connection : %v", err)
 	}
 
+	// TODO  add possibility to read config from file instead from flags
 	worker, err := worker.New(&config.Config{
 		Path:            *fInodePath,
 		FilesystemName:  *fFilesystemName,
@@ -87,6 +88,7 @@ func main() {
 		ShutdownTimeout: *fShutdownTimeout,
 		CacheSize:       *fCacheSize,
 		ManagerPort:     *fManagerPort,
+		BloomFilterSize: 10000, // TODO CHANGE ME
 	}, sugarlog)
 	if err != nil {
 		log.Fatalf("makeFS: %v", err)

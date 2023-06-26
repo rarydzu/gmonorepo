@@ -1,6 +1,7 @@
 package monofs
 
 import (
+	"fmt"
 	"net"
 	"os/user"
 	"strconv"
@@ -49,7 +50,7 @@ func NewMonoFS(cfg *config.Config, log *zap.SugaredLogger) (*Monofs, error) {
 	var limit syscall.Rlimit
 	metadb, err := fsdb.New(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("metadb: %v", err)
 	}
 	user, err := user.Current()
 	if err != nil {
@@ -69,7 +70,7 @@ func NewMonoFS(cfg *config.Config, log *zap.SugaredLogger) (*Monofs, error) {
 	lastInodeEngine := lastinode.New(cfg.Path, metadb.GetIStoreHandler())
 	s, err := metadb.StartSyncSnapshot()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("StartSyncSnapshot: %v", err)
 	}
 	manager := manager.New(cfg.FilesystemName, metadb.Snapshot, cfg.ManagerPort)
 	manager.Start()

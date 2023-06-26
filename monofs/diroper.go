@@ -110,7 +110,7 @@ func (fs *Monofs) ReadDir(
 		)
 		// Stop if we've filled the buffer.
 		if op.BytesRead == len(op.Dst) {
-			op.Offset = fuseops.DirOffset(x + 1)
+			op.Offset += fuseops.DirOffset(x + 1)
 			offset := int(op.Offset)
 			dir.UpdateOffset(offset)
 			dir.UpdateName(inode.Name)
@@ -118,7 +118,7 @@ func (fs *Monofs) ReadDir(
 		}
 	}
 	// Advance the offset.
-	op.Offset = fuseops.DirOffset(len(inodeEntries))
+	op.Offset += fuseops.DirOffset(len(inodeEntries))
 	return nil
 }
 

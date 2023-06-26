@@ -17,7 +17,7 @@ const (
 	// CurrentSnapshotName 	current snapshot name
 	CurrentSnapshotName = "current"
 	//SnapshostsDataPath 	snapshots data path
-	SnapshostsDataPath = "data"
+	SnapshostsDataPath = "snapshots"
 )
 
 type SnapshotResult struct {
@@ -65,7 +65,6 @@ func (s *Snapshot) newSnapshot(name string) (string, error) {
 	if name == "" {
 		return "", errors.New("name cannot be empty")
 	}
-
 	// create Snapshot hash
 	sha256 := sha256.New()
 	sha256.Write([]byte(name))
@@ -97,19 +96,19 @@ func (s *Snapshot) newSnapshot(name string) (string, error) {
 	}
 	inodeSnapshotDB, err := leveldb.OpenFile(path.Join(s.SnapshotPath, SnapshostsDataPath, string(cSnapshot), "inode"), nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot open inode snapshot: %v", err)
 	}
+	defer inodeSnapshotDB.Close()
 	attrSnapshotDB, err := leveldb.OpenFile(path.Join(s.SnapshotPath, SnapshostsDataPath, string(cSnapshot), "attrs"), nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot open attr snapshot: %v", err)
 	}
+	defer attrSnapshotDB.Close()
 	s.Name = name
 	walFileName, err := s.w.Dump(make(chan string), attrSnapshotDB)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot dump wal: %v", err)
 	}
-	defer inodeSnapshotDB.Close()
-	defer attrSnapshotDB.Close()
 	is := inodeSnapshot.NewIterator(nil, nil)
 	batch := new(leveldb.Batch)
 	for is.Next() {
@@ -138,8 +137,10 @@ func (s *Snapshot) newSnapshot(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := s.w.DBDump(walFileName, make(chan string), attrSnapshotDB); err != nil {
-		return "", err
+	if len(walFileName) > 0 {
+		if err := s.w.DBDump(walFileName, make(chan string), attrSnapshotDB); err != nil {
+			return "", fmt.Errorf("cannot DBDump wal: %v", err)
+		}
 	}
 	s.Name = name
 	return hash, nil

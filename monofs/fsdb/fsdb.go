@@ -60,14 +60,14 @@ func New(config *config.Config) (*Fsdb, error) {
 		return nil, err
 	}
 	io := &lopt.Options{
-		Filter: lfilter.NewBloomFilter(1000),
+		Filter: lfilter.NewBloomFilter(config.BloomFilterSize),
 	}
 	istore, err = leveldb.OpenFile(ipath, io)
 	if err != nil {
 		return nil, err
 	}
 	ao := &lopt.Options{
-		Filter: lfilter.NewBloomFilter(1000),
+		Filter: lfilter.NewBloomFilter(config.BloomFilterSize),
 	}
 	astore, err := leveldb.OpenFile(apath, ao)
 	if err != nil {
@@ -143,7 +143,7 @@ func New(config *config.Config) (*Fsdb, error) {
 func (db *Fsdb) StartSyncSnapshot() (string, error) {
 	snap, err := db.Snapshot.GetCurrentSnapshot()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("getting current snapshot failed: %w", err)
 	}
 	if snap != "" {
 		return snap, nil
@@ -151,7 +151,7 @@ func (db *Fsdb) StartSyncSnapshot() (string, error) {
 	snapName := fmt.Sprintf("%d", time.Now().UnixNano())
 	hash, err := db.Snapshot.CreateSyncSnapshot(snapName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("creating sync snapshot failed: %w", err)
 	}
 	return hash, nil
 }
@@ -369,7 +369,10 @@ func (db *Fsdb) GetChildren(inodeID uint64, offset int, limit int, key []byte) (
 	prefix := []byte(fmt.Sprintf("%d:", inodeID))
 	iter := db.istore.NewIterator(lutil.BytesPrefix(prefix), nil)
 	if offset > 0 {
-		iter.Seek(key)
+		// convert key to db key
+		dbKey := []byte(fmt.Sprintf("%d:", inodeID))
+		dbKey = append(dbKey, key...)
+		iter.Seek(dbKey)
 	}
 	for iter.Next() {
 		kSlice := strings.Split(string(iter.Key()), ":")

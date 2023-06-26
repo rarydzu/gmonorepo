@@ -64,8 +64,6 @@ func (dir *FsDir) DbEntries(offset fuseops.DirOffset, size int) ([]*fsdb.Inode, 
 	dir.offset += currentOffset
 	if len(entries) > 0 {
 		dir.name = entries[len(entries)-1].Name
-	}
-	if offset < fuseops.DirOffset(size) {
 		dir.dentries = entries
 	}
 	return entries, nil
