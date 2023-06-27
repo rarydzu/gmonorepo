@@ -135,11 +135,7 @@ func (t *CacheTable) Add(key uint64, data []byte, ttl time.Duration, opts ...Opt
 	t.table[key] = NewCacheItem(key, data, t.cacheGeneration, ttl, opts...)
 	t.cacheMutations++
 	if t.addCallback != nil {
-		bData, err := t.table[key].Marshall()
-		if err != nil {
-			return err
-		}
-		return t.addCallback(key, bData)
+		return t.addCallback(key, data)
 	}
 	return nil
 }

@@ -79,6 +79,7 @@ func (fs *Monofs) GetInodeAttributes(
 			fs.log.Debugf("GetInodeAttributes NOT FOUND(%d): %v", op.Inode, err)
 			return fuse.ENOENT
 		}
+		fs.log.Errorf("GetInodeAttributes: %v", err)
 		return fuse.EIO
 	}
 	fs.patchTime(&attrs)

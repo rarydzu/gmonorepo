@@ -21,7 +21,7 @@ var fCertDir = flag.String("cert_dir", "", "Certificate directory")
 var fDev = flag.Bool("dev", false, "Run in development mode")
 var fFuseDebug = flag.Bool("fuse_debug", false, "Run in fuse debug mode")
 var fManagerPort = flag.String("manager_port", ":50052", "Manager port")
-var fCacheSize = flag.Int("cache_size", 10000, "Cache size")
+var fCacheSize = flag.Int("cache_size", 100, "Cache size") //was 10000
 var fShutdownTimeout = flag.Duration("shutdown_timeout", 60*time.Second, "Shutdown timeout")
 var fFilesystemName = flag.String("filesystem_name", "monofs#head", "Filesystem name")
 

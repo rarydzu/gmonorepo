@@ -223,7 +223,6 @@ func (fs *Monofs) Unlink(
 func (fs *Monofs) OpenFile(
 	ctx context.Context,
 	op *fuseops.OpenFileOp) error {
-	fs.log.Debugf("OpenFile(%d)", op.Inode)
 	a, err := fs.metadb.GetFsdbInodeAttributes(uint64(op.Inode))
 	if err != nil {
 		if err == fsdb.ErrNoSuchInode {

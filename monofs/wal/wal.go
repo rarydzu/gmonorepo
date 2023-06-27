@@ -89,7 +89,6 @@ func (w *WAL) OpenLastWALFile() error {
 
 // CreateNewWALFile creates new WAL file
 func (w *WAL) CreateNewWALFile() error {
-	fmt.Println("CreateNewWALFile")
 	cnt := w.fileCounter
 	if w.file != nil {
 		w.file.Close()
@@ -230,4 +229,9 @@ func (w *WAL) Reply() ([]Entry, error) {
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+// WalFilename returns current WAL filename
+func (w *WAL) WalFilename() string {
+	return fmt.Sprintf("%s/%d.wal", w.path, w.fileCounter)
 }
