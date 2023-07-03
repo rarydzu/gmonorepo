@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -216,4 +217,22 @@ func (t *MonoFSTest) CreateRemoveLinks() {
 	entries, err := fusetesting.ReadDirPicky(t.Dir)
 	AssertEq(nil, err)
 	AssertEq(3, len(entries))
+}
+
+func (t *MonoFSTest) Create2Kfiles1Dir() {
+	dirPath := path.Join(t.Dir, "1Dir")
+	err := os.Mkdir(dirPath, 0755)
+	AssertEq(nil, err)
+	for i := 0; i < 2000; i++ {
+		fPath := path.Join(dirPath, fmt.Sprintf("file%d.txt", i))
+		myfile, err := os.Create(fPath)
+		AssertEq(nil, err)
+		myfile.Close()
+	}
+
+	for i := 0; i < 2000; i++ {
+		fPath := path.Join(dirPath, fmt.Sprintf("file%d.txt", i))
+		err := os.Remove(fPath)
+		AssertEq(nil, err)
+	}
 }

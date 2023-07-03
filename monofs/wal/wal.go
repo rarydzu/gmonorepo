@@ -12,6 +12,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const (
+	// WALBatchMaxSize is max size of WAL batch size
+	WALBatchMaxSize = 500
+)
+
 type Entry struct {
 	Key        []byte
 	Value      []byte
@@ -181,6 +186,8 @@ func (w *WAL) DBDump(fileName string, output chan string, db *leveldb.DB) error 
 	decoder := NewDecoder(f)
 
 	wb := new(leveldb.Batch)
+	entryCounter := 0
+	outputData := []string{}
 	for {
 		var entry Entry
 		if err := decoder.Decode(&entry); err != nil {
@@ -189,25 +196,51 @@ func (w *WAL) DBDump(fileName string, output chan string, db *leveldb.DB) error 
 			}
 			return err
 		}
+		entryCounter++
 		if entry.Tombstoned {
 			wb.Delete(entry.Key)
 			if db != nil {
-				output <- string(entry.Key)
+				outputData = append(outputData, string(entry.Key))
 			}
 		} else {
 			wb.Put(entry.Key, entry.Value)
 			if db != nil {
-				output <- string(entry.Key)
+				outputData = append(outputData, string(entry.Key))
 			}
+		}
+		if entryCounter%WALBatchMaxSize == 0 && len(outputData) > 0 {
+			err = w.db.Write(wb, nil)
+			if err != nil {
+				return err
+			}
+			if db != nil {
+				err = db.Write(wb, nil)
+				if err != nil {
+					return err
+				}
+			}
+			wb.Reset()
+			for _, key := range outputData {
+				output <- key
+			}
+			outputData = []string{}
 		}
 	}
 	f.Close()
-	err = w.db.Write(wb, nil)
-	if err != nil {
-		return err
-	}
-	if db != nil {
-		return db.Write(wb, nil)
+	if len(outputData) > 0 {
+		err = w.db.Write(wb, nil)
+		if err != nil {
+			return err
+		}
+		if db != nil {
+			err = db.Write(wb, nil)
+			if err != nil {
+				return err
+			}
+		}
+		for _, key := range outputData {
+			output <- key
+		}
 	}
 	return nil
 }
