@@ -42,6 +42,9 @@ func New(cfg *config.Config, log *zap.SugaredLogger) (*Worker, error) {
 	if err := copier.Copy(&w.cfg, cfg); err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(w.cfg.LocalDataPath, 0755); err != nil {
+		return nil, err
+	}
 	monoServer, err := monofs.NewMonoFS(w.cfg, w.log)
 	if err != nil {
 		return nil, err

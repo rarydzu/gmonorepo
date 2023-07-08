@@ -44,6 +44,7 @@ type Monofs struct {
 	stopSnapshotCheck chan bool
 	manager           *manager.Manager
 	grpcManager       *grpc.Server
+	localDataPath     string
 }
 
 func NewMonoFS(cfg *config.Config, log *zap.SugaredLogger) (*Monofs, error) {
@@ -91,6 +92,7 @@ func NewMonoFS(cfg *config.Config, log *zap.SugaredLogger) (*Monofs, error) {
 		stopSnapshotCheck: make(chan bool),
 		manager:           manager,
 		grpcManager:       grpc.NewServer(),
+		localDataPath:     cfg.LocalDataPath,
 	}
 	return fs, nil
 }

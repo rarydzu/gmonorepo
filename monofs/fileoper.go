@@ -54,7 +54,7 @@ func (fs *Monofs) CreateFile(
 		fs.log.Errorf("CreateFile(%d:%s): %v", op.Parent, op.Name, err)
 		return fuse.EIO
 	}
-	fs.fileHandles[op.Handle] = monofile.New(fs.Name, inode.ID(), inode.Attrs.Hash)
+	fs.fileHandles[op.Handle] = monofile.New(fs.Name, inode.ID(), inode.Attrs.Hash, fs.localDataPath)
 	op.Entry.Child = inode.ID()
 	op.Entry.Attributes = inode.Attrs.InodeAttributes
 	return nil
@@ -236,7 +236,7 @@ func (fs *Monofs) OpenFile(
 		fs.log.Errorf("OpenFile(GetInodeAttrs)(%d): hash is empty", op.Inode)
 		return fuse.EIO
 	}
-	fs.fileHandles[op.Handle] = monofile.New(fs.Name, op.Inode, a.GetHash())
+	fs.fileHandles[op.Handle] = monofile.New(fs.Name, op.Inode, a.GetHash(), fs.localDataPath)
 	return nil
 }
 

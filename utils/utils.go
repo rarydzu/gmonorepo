@@ -15,6 +15,18 @@ func BytesToUint64(b []byte) uint64 {
 	return binary.BigEndian.Uint64(b)
 }
 
+// Uint32ToBytes converts uint32 to bytes
+func Uint32ToBytes(i uint32) []byte {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], i)
+	return buf[:]
+}
+
+// BytesToUint32 converts bytes to uint32
+func BytesToUint32(b []byte) uint32 {
+	return binary.BigEndian.Uint32(b)
+}
+
 // Uint64ToUint40 converts uint64 to uint40
 func Uint64ToUint40(i uint64) uint64 {
 	return i & 0xFFFFFFFFFF

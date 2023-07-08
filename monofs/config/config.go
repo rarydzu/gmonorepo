@@ -30,4 +30,6 @@ type Config struct {
 	ManagerPort string
 	//BloomFilterSize bloom filter size
 	BloomFilterSize int
+	//LocalDataPath local data path
+	LocalDataPath string
 }

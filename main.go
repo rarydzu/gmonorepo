@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"path"
 	"runtime/debug"
 	"time"
 
@@ -24,6 +25,8 @@ var fManagerPort = flag.String("manager_port", ":50052", "Manager port")
 var fCacheSize = flag.Int("cache_size", 100, "Cache size") //was 10000
 var fShutdownTimeout = flag.Duration("shutdown_timeout", 60*time.Second, "Shutdown timeout")
 var fFilesystemName = flag.String("filesystem_name", "monofs#head", "Filesystem name")
+var fBloomFilterSize = flag.Int("bloom_filter_size", 10000, "Bloom filter size")
+var fLocalDataPath = flag.String("local_data_path", "", "Local data path")
 
 func version() string {
 	var (
@@ -76,6 +79,10 @@ func main() {
 		log.Fatalf("Stat connection : %v", err)
 	}
 
+	localDataPath := *fLocalDataPath
+	if localDataPath == "" {
+		localDataPath = path.Join(*fInodePath, "localDataPath")
+	}
 	// TODO  add possibility to read config from file instead from flags
 	worker, err := worker.New(&config.Config{
 		Path:            *fInodePath,
@@ -88,7 +95,8 @@ func main() {
 		ShutdownTimeout: *fShutdownTimeout,
 		CacheSize:       *fCacheSize,
 		ManagerPort:     *fManagerPort,
-		BloomFilterSize: 10000, // TODO CHANGE ME
+		BloomFilterSize: *fBloomFilterSize,
+		LocalDataPath:   localDataPath,
 	}, sugarlog)
 	if err != nil {
 		log.Fatalf("makeFS: %v", err)

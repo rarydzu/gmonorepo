@@ -11,20 +11,22 @@ import (
 )
 
 type FsFile struct {
-	fsName string
-	inode  fuseops.InodeID
-	handle fuseops.HandleID
-	offset uint64
-	data   []byte
-	hash   string
+	fsName       string
+	inode        fuseops.InodeID
+	handle       fuseops.HandleID
+	offset       uint64
+	data         []byte
+	hash         string
+	dataBasePath string
 }
 
 // New creates new FsFile object
-func New(name string, inode fuseops.InodeID, hash string) *FsFile {
+func New(name string, inode fuseops.InodeID, hash string, dataBasePath string) *FsFile {
 	return &FsFile{
-		fsName: name,
-		inode:  inode,
-		hash:   hash,
+		fsName:       name,
+		inode:        inode,
+		hash:         hash,
+		dataBasePath: dataBasePath,
 	}
 }
 
